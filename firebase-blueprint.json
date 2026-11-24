@@ -1,0 +1,393 @@
+{
+  "entities": {
+    "SchoolMeta": {
+      "title": "SchoolMeta",
+      "description": "School initialization metadata storing the primary school ID and initial administrator UID.",
+      "type": "object",
+      "properties": {
+        "schoolId": { "type": "string" },
+        "adminUid": { "type": "string" },
+        "adminEmail": { "type": "string" },
+        "schoolName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp" }
+      },
+      "required": ["schoolId", "adminUid", "adminEmail", "schoolName", "createdAt", "updatedAt"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Marker document for verified school administrators.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "email": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp" }
+      },
+      "required": ["userId", "email", "createdAt"]
+    },
+    "RoleGrant": {
+      "title": "RoleGrant",
+      "description": "Admin-issued role invitation mapping a verified Google email to a school role.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["STUDENT", "TEACHER", "PARENT", "ADMIN"] },
+        "fullName": { "type": "string" },
+        "gradeLevel": { "type": "string" },
+        "subject": { "type": "string" },
+        "linkedStudentId": { "type": "string" },
+        "linkedStudentName": { "type": "string" },
+        "adminId": { "type": "string" },
+        "claimedByUid": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role", "fullName", "adminId", "createdAt", "updatedAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user profile with role-based access control metadata.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["STUDENT", "TEACHER", "PARENT", "ADMIN"] },
+        "gradeLevel": { "type": "string" },
+        "subject": { "type": "string" },
+        "linkedStudentId": { "type": "string" },
+        "linkedStudentName": { "type": "string" },
+        "adminId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "displayName", "email", "role", "adminId", "createdAt", "updatedAt"]
+    },
+    "AiChatMessage": {
+      "title": "AiChatMessage",
+      "description": "Private user-scoped AI Tutor conversation entry.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "prompt": { "type": "string" },
+        "response": { "type": "string" },
+        "subject": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "prompt", "response", "subject", "createdAt"]
+    },
+    "TeacherAssignment": {
+      "title": "TeacherAssignment",
+      "description": "Admin assignment of a teacher to a subject and grade level.",
+      "type": "object",
+      "properties": {
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "subject": { "type": "string" },
+        "gradeLevel": { "type": "string" },
+        "schedule": { "type": "string" },
+        "adminId": { "type": "string" },
+        "schoolId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["teacherId", "teacherName", "subject", "gradeLevel", "schedule", "adminId", "schoolId", "createdAt", "updatedAt"]
+    },
+    "StudentRegistration": {
+      "title": "StudentRegistration",
+      "description": "Admin student enrollment and class assignment record.",
+      "type": "object",
+      "properties": {
+        "studentUid": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentCode": { "type": "string" },
+        "gradeLevel": { "type": "string" },
+        "section": { "type": "string" },
+        "parentUid": { "type": "string" },
+        "parentName": { "type": "string" },
+        "adminId": { "type": "string" },
+        "teacherUids": { "type": "array" },
+        "status": { "type": "string", "enum": ["ACTIVE", "INACTIVE"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["studentUid", "studentName", "studentCode", "gradeLevel", "section", "adminId", "teacherUids", "status", "createdAt", "updatedAt"]
+    },
+    "Assignment": {
+      "title": "Assignment",
+      "description": "Homework assignment created by a teacher for students.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "subject": { "type": "string" },
+        "gradeLevel": { "type": "string" },
+        "dueDateLabel": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "adminId": { "type": "string" },
+        "schoolId": { "type": "string" },
+        "status": { "type": "string", "enum": ["OPEN", "CLOSED"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "description", "subject", "gradeLevel", "dueDateLabel", "teacherId", "teacherName", "adminId", "schoolId", "status", "createdAt", "updatedAt"]
+    },
+    "AssignmentSubmission": {
+      "title": "AssignmentSubmission",
+      "description": "Student homework submission and teacher grading record.",
+      "type": "object",
+      "properties": {
+        "assignmentId": { "type": "string" },
+        "assignmentTitle": { "type": "string" },
+        "subject": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "parentId": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "adminId": { "type": "string" },
+        "answerText": { "type": "string" },
+        "score": { "type": "number" },
+        "feedback": { "type": "string" },
+        "status": { "type": "string", "enum": ["SUBMITTED", "GRADED"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["assignmentId", "assignmentTitle", "subject", "studentId", "studentName", "teacherId", "adminId", "answerText", "score", "status", "createdAt", "updatedAt"]
+    },
+    "Quiz": {
+      "title": "Quiz",
+      "description": "Exam or quiz created by a teacher with multiple-choice questions.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "subject": { "type": "string" },
+        "gradeLevel": { "type": "string" },
+        "durationMinutes": { "type": "integer" },
+        "questions": { "type": "array" },
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "adminId": { "type": "string" },
+        "schoolId": { "type": "string" },
+        "published": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "subject", "gradeLevel", "durationMinutes", "questions", "teacherId", "teacherName", "adminId", "schoolId", "published", "createdAt", "updatedAt"]
+    },
+    "QuizAttempt": {
+      "title": "QuizAttempt",
+      "description": "Student quiz attempt and auto-graded score.",
+      "type": "object",
+      "properties": {
+        "quizId": { "type": "string" },
+        "quizTitle": { "type": "string" },
+        "subject": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "parentId": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "adminId": { "type": "string" },
+        "score": { "type": "number" },
+        "totalQuestions": { "type": "integer" },
+        "correctCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["quizId", "quizTitle", "subject", "studentId", "studentName", "teacherId", "adminId", "score", "totalQuestions", "correctCount", "createdAt", "updatedAt"]
+    },
+    "ExamResult": {
+      "title": "ExamResult",
+      "description": "Official exam score recorded by a teacher or admin for a specific student.",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "parentId": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "adminId": { "type": "string" },
+        "subject": { "type": "string" },
+        "gradeLevel": { "type": "string" },
+        "examName": { "type": "string" },
+        "monthLabel": { "type": "string" },
+        "score": { "type": "number" },
+        "maxScore": { "type": "number" },
+        "remarks": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["studentId", "studentName", "teacherId", "teacherName", "adminId", "subject", "gradeLevel", "examName", "monthLabel", "score", "maxScore", "createdAt", "updatedAt"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Daily student attendance record entered by a teacher.",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "parentId": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "adminId": { "type": "string" },
+        "gradeLevel": { "type": "string" },
+        "dateLabel": { "type": "string" },
+        "status": { "type": "string", "enum": ["PRESENT", "ABSENT", "LATE"] },
+        "note": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["studentId", "studentName", "teacherId", "adminId", "gradeLevel", "dateLabel", "status", "createdAt", "updatedAt"]
+    },
+    "LearningMaterial": {
+      "title": "LearningMaterial",
+      "description": "Study material, PDF link, book, or lesson notes uploaded by a teacher.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "subject": { "type": "string" },
+        "gradeLevel": { "type": "string" },
+        "materialType": { "type": "string", "enum": ["PDF", "BOOK", "NOTES"] },
+        "resourceUrl": { "type": "string" },
+        "contentBody": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "adminId": { "type": "string" },
+        "schoolId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "description", "subject", "gradeLevel", "materialType", "teacherId", "teacherName", "adminId", "schoolId", "createdAt", "updatedAt"]
+    },
+    "EarlyWarning": {
+      "title": "EarlyWarning",
+      "description": "Automated early warning alert sent to teachers and administrators when a student's academic performance drops significantly.",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "gradeLevel": { "type": "string" },
+        "subject": { "type": "string" },
+        "previousAverage": { "type": "number" },
+        "currentScore": { "type": "number" },
+        "dropAmount": { "type": "number" },
+        "reason": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "adminId": { "type": "string" },
+        "status": { "type": "string", "enum": ["OPEN", "RESOLVED"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["studentId", "studentName", "gradeLevel", "subject", "previousAverage", "currentScore", "dropAmount", "reason", "teacherId", "adminId", "status", "createdAt", "updatedAt"]
+    },
+    "ParentMessage": {
+      "title": "ParentMessage",
+      "description": "Private communication between parents and teachers/administrators, strictly hidden from students.",
+      "type": "object",
+      "properties": {
+        "parentId": { "type": "string" },
+        "parentName": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "recipientRole": { "type": "string", "enum": ["TEACHER", "ADMIN"] },
+        "recipientId": { "type": "string" },
+        "participantUids": { "type": "array" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "senderRole": { "type": "string", "enum": ["PARENT", "TEACHER", "ADMIN"] },
+        "subject": { "type": "string" },
+        "body": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["parentId", "parentName", "studentId", "studentName", "recipientRole", "recipientId", "participantUids", "senderId", "senderName", "senderRole", "subject", "body", "createdAt", "updatedAt"]
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "School-wide notice or announcement posted by administration or teachers.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "category": { "type": "string", "enum": ["GENERAL", "EXAM", "EVENT", "URGENT"] },
+        "authorId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "adminId": { "type": "string" },
+        "schoolId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "body", "category", "authorId", "authorName", "adminId", "schoolId", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/school_meta/{metaId}": {
+      "schema": { "$ref": "#/entities/SchoolMeta" },
+      "description": "School initialization anchor document."
+    },
+    "/admins/{uid}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Verified administrator UID registry."
+    },
+    "/role_grants/{emailKey}": {
+      "schema": { "$ref": "#/entities/RoleGrant" },
+      "description": "Admin-assigned role grants keyed by normalized email."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profiles scoped by UID."
+    },
+    "/users/{userId}/ai_chats/{chatId}": {
+      "schema": { "$ref": "#/entities/AiChatMessage" },
+      "description": "Private AI Tutor history per user."
+    },
+    "/teacher_assignments/{assignmentId}": {
+      "schema": { "$ref": "#/entities/TeacherAssignment" },
+      "description": "Teacher subject and grade assignments."
+    },
+    "/student_registrations/{regId}": {
+      "schema": { "$ref": "#/entities/StudentRegistration" },
+      "description": "Student enrollments and class allocations."
+    },
+    "/assignments/{assignmentId}": {
+      "schema": { "$ref": "#/entities/Assignment" },
+      "description": "Homework assignments."
+    },
+    "/assignment_submissions/{submissionId}": {
+      "schema": { "$ref": "#/entities/AssignmentSubmission" },
+      "description": "Student homework submissions and grades."
+    },
+    "/quizzes/{quizId}": {
+      "schema": { "$ref": "#/entities/Quiz" },
+      "description": "Quizzes and exams created by teachers."
+    },
+    "/quiz_attempts/{attemptId}": {
+      "schema": { "$ref": "#/entities/QuizAttempt" },
+      "description": "Student quiz attempts and scores."
+    },
+    "/exam_results/{resultId}": {
+      "schema": { "$ref": "#/entities/ExamResult" },
+      "description": "Official exam results."
+    },
+    "/attendance/{attendanceId}": {
+      "schema": { "$ref": "#/entities/AttendanceRecord" },
+      "description": "Daily student attendance history."
+    },
+    "/learning_materials/{materialId}": {
+      "schema": { "$ref": "#/entities/LearningMaterial" },
+      "description": "Books, PDFs, and study materials."
+    },
+    "/early_warnings/{warningId}": {
+      "schema": { "$ref": "#/entities/EarlyWarning" },
+      "description": "Early warning alerts for teachers and administrators."
+    },
+    "/parent_messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ParentMessage" },
+      "description": "Private parent-teacher and parent-admin messages."
+    },
+    "/announcements/{announcementId}": {
+      "schema": { "$ref": "#/entities/Announcement" },
+      "description": "School announcements."
+    }
+  }
+}

@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">Koofkeet School</string>
+    <string name="school_full_title">Application Mana Barumsaa Koofkeet</string>
+    <string name="school_motto">"Jalqabni Ogummaa Waaqayyoon Sodaachuudha." Fkn 1:7</string>
+    <string name="footer_quote">"Milkaa\'ina jechuun bakka tokko gahanii dhaabachuu utuun taane, adeemsa itti fufaadha." — Been Siwiitlaand</string>
+    <string name="ai_tutor_greeting">Ani AI TUTOR Mana Barumsaa Koofkeetin jedhama. Maal Isin gargaaru?</string>
+    <string name="sign_in_google">Google-n Seenaa (Sign in with Google)</string>
+    <string name="action_sign_out">Ba\'i (Sign Out)</string>
+    <string name="nav_dashboard">Cuunfaa</string>
+    <string name="nav_academics">Barnoota</string>
+    <string name="nav_ai_tutor">AI Tutor</string>
+    <string name="nav_comms">Qunnamtii</string>
+    <string name="nav_admin">Bulchiinsa</string>
+    <string name="nav_developer">Qopheessaa</string>
+    <string name="privacy_notice_banner">Eegumsa Odeeffannoo: Hundi gahee isaaf kenname qofaan tajaajila argata.</string>
+</resources>

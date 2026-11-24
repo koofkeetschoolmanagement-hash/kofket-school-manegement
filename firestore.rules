@@ -1,0 +1,606 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- GLOBAL HELPERS ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\.\\-]+$');
+    }
+
+    function isStr(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isOptStr(data, key, maxLen) {
+      return !(key in data) || (data[key] is string && data[key].size() <= maxLen);
+    }
+
+    function isValidTimestamp(val) {
+      return val is timestamp && val <= request.time;
+    }
+
+    function isBootstrappedAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email_verified == true &&
+        request.auth.token.email == 'koofkeetschoolmanagement@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() ||
+        (isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    function hasRole(roleName) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == roleName;
+    }
+
+    function isTeacher() {
+      return hasRole('TEACHER');
+    }
+
+    function isParent() {
+      return hasRole('PARENT');
+    }
+
+    function isSchoolInitialized() {
+      return exists(/databases/$(database)/documents/school_meta/initialized);
+    }
+
+    // --- VALIDATION HELPERS ---
+    function isValidSchoolMeta(data) {
+      return data.keys().hasAll(['schoolId', 'adminUid', 'adminEmail', 'schoolName', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['schoolId', 'adminUid', 'adminEmail', 'schoolName', 'createdAt', 'updatedAt']) &&
+        data.schoolId == 'koofkeet_main' &&
+        isStr(data.adminUid, 1, 128) &&
+        isStr(data.adminEmail, 3, 150) &&
+        isStr(data.schoolName, 2, 120) &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidAdminDoc(data) {
+      return data.keys().hasAll(['userId', 'email', 'createdAt']) &&
+        data.keys().hasOnly(['userId', 'email', 'createdAt']) &&
+        isStr(data.userId, 1, 128) &&
+        isStr(data.email, 3, 150) &&
+        isValidTimestamp(data.createdAt);
+    }
+
+    function isValidRoleGrant(data) {
+      return data.keys().hasAll(['email', 'role', 'fullName', 'adminId', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['email', 'role', 'fullName', 'gradeLevel', 'subject', 'linkedStudentId', 'linkedStudentName', 'adminId', 'claimedByUid', 'createdAt', 'updatedAt']) &&
+        isStr(data.email, 3, 150) &&
+        data.role in ['STUDENT', 'TEACHER', 'PARENT', 'ADMIN'] &&
+        isStr(data.fullName, 2, 100) &&
+        isOptStr(data, 'gradeLevel', 40) &&
+        isOptStr(data, 'subject', 60) &&
+        isOptStr(data, 'linkedStudentId', 128) &&
+        isOptStr(data, 'linkedStudentName', 100) &&
+        isStr(data.adminId, 1, 128) &&
+        isOptStr(data, 'claimedByUid', 128) &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['userId', 'displayName', 'email', 'role', 'adminId', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['userId', 'displayName', 'email', 'role', 'gradeLevel', 'subject', 'linkedStudentId', 'linkedStudentName', 'adminId', 'createdAt', 'updatedAt']) &&
+        isStr(data.userId, 1, 128) &&
+        isStr(data.displayName, 2, 100) &&
+        isStr(data.email, 3, 150) &&
+        data.role in ['STUDENT', 'TEACHER', 'PARENT', 'ADMIN'] &&
+        isOptStr(data, 'gradeLevel', 40) &&
+        isOptStr(data, 'subject', 60) &&
+        isOptStr(data, 'linkedStudentId', 128) &&
+        isOptStr(data, 'linkedStudentName', 100) &&
+        isStr(data.adminId, 1, 128) &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidAiChat(data) {
+      return data.keys().hasAll(['userId', 'prompt', 'response', 'subject', 'createdAt']) &&
+        data.keys().hasOnly(['userId', 'prompt', 'response', 'subject', 'createdAt']) &&
+        isStr(data.userId, 1, 128) &&
+        isStr(data.prompt, 1, 2000) &&
+        isStr(data.response, 1, 8000) &&
+        isStr(data.subject, 1, 60) &&
+        isValidTimestamp(data.createdAt);
+    }
+
+    function isValidTeacherAssignment(data) {
+      return data.keys().hasAll(['teacherId', 'teacherName', 'subject', 'gradeLevel', 'schedule', 'adminId', 'schoolId', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['teacherId', 'teacherName', 'subject', 'gradeLevel', 'schedule', 'adminId', 'schoolId', 'createdAt', 'updatedAt']) &&
+        isStr(data.teacherId, 1, 128) &&
+        isStr(data.teacherName, 2, 100) &&
+        isStr(data.subject, 2, 60) &&
+        isStr(data.gradeLevel, 1, 40) &&
+        isStr(data.schedule, 1, 100) &&
+        isStr(data.adminId, 1, 128) &&
+        data.schoolId == 'koofkeet_main' &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidStudentRegistration(data) {
+      return data.keys().hasAll(['studentUid', 'studentName', 'studentCode', 'gradeLevel', 'section', 'adminId', 'teacherUids', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['studentUid', 'studentName', 'studentCode', 'gradeLevel', 'section', 'parentUid', 'parentName', 'adminId', 'teacherUids', 'status', 'createdAt', 'updatedAt']) &&
+        isStr(data.studentUid, 1, 128) &&
+        isStr(data.studentName, 2, 100) &&
+        isStr(data.studentCode, 2, 40) &&
+        isStr(data.gradeLevel, 1, 40) &&
+        isStr(data.section, 1, 20) &&
+        isOptStr(data, 'parentUid', 128) &&
+        isOptStr(data, 'parentName', 100) &&
+        isStr(data.adminId, 1, 128) &&
+        data.teacherUids is list && data.teacherUids.size() <= 20 &&
+        (data.teacherUids.size() == 0 || data.teacherUids[0] is string) &&
+        data.status in ['ACTIVE', 'INACTIVE'] &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidAssignment(data) {
+      return data.keys().hasAll(['title', 'description', 'subject', 'gradeLevel', 'dueDateLabel', 'teacherId', 'teacherName', 'adminId', 'schoolId', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['title', 'description', 'subject', 'gradeLevel', 'dueDateLabel', 'teacherId', 'teacherName', 'adminId', 'schoolId', 'status', 'createdAt', 'updatedAt']) &&
+        isStr(data.title, 2, 150) &&
+        isStr(data.description, 2, 2000) &&
+        isStr(data.subject, 2, 60) &&
+        isStr(data.gradeLevel, 1, 40) &&
+        isStr(data.dueDateLabel, 1, 40) &&
+        isStr(data.teacherId, 1, 128) &&
+        isStr(data.teacherName, 2, 100) &&
+        isStr(data.adminId, 1, 128) &&
+        data.schoolId == 'koofkeet_main' &&
+        data.status in ['OPEN', 'CLOSED'] &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidSubmission(data) {
+      return data.keys().hasAll(['assignmentId', 'assignmentTitle', 'subject', 'studentId', 'studentName', 'teacherId', 'adminId', 'answerText', 'score', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['assignmentId', 'assignmentTitle', 'subject', 'studentId', 'studentName', 'parentId', 'teacherId', 'adminId', 'answerText', 'score', 'feedback', 'status', 'createdAt', 'updatedAt']) &&
+        isStr(data.assignmentId, 1, 128) &&
+        isStr(data.assignmentTitle, 1, 150) &&
+        isStr(data.subject, 1, 60) &&
+        isStr(data.studentId, 1, 128) &&
+        isStr(data.studentName, 2, 100) &&
+        isOptStr(data, 'parentId', 128) &&
+        isStr(data.teacherId, 1, 128) &&
+        isStr(data.adminId, 1, 128) &&
+        isStr(data.answerText, 1, 4000) &&
+        (data.score is number && data.score >= 0 && data.score <= 100) &&
+        isOptStr(data, 'feedback', 1000) &&
+        data.status in ['SUBMITTED', 'GRADED'] &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidQuiz(data) {
+      return data.keys().hasAll(['title', 'subject', 'gradeLevel', 'durationMinutes', 'questions', 'teacherId', 'teacherName', 'adminId', 'schoolId', 'published', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['title', 'subject', 'gradeLevel', 'durationMinutes', 'questions', 'teacherId', 'teacherName', 'adminId', 'schoolId', 'published', 'createdAt', 'updatedAt']) &&
+        isStr(data.title, 2, 150) &&
+        isStr(data.subject, 2, 60) &&
+        isStr(data.gradeLevel, 1, 40) &&
+        (data.durationMinutes is int && data.durationMinutes >= 1 && data.durationMinutes <= 180) &&
+        data.questions is list && data.questions.size() >= 1 && data.questions.size() <= 25 &&
+        isStr(data.teacherId, 1, 128) &&
+        isStr(data.teacherName, 2, 100) &&
+        isStr(data.adminId, 1, 128) &&
+        data.schoolId == 'koofkeet_main' &&
+        data.published is bool &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidQuizAttempt(data) {
+      return data.keys().hasAll(['quizId', 'quizTitle', 'subject', 'studentId', 'studentName', 'teacherId', 'adminId', 'score', 'totalQuestions', 'correctCount', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['quizId', 'quizTitle', 'subject', 'studentId', 'studentName', 'parentId', 'teacherId', 'adminId', 'score', 'totalQuestions', 'correctCount', 'createdAt', 'updatedAt']) &&
+        isStr(data.quizId, 1, 128) &&
+        isStr(data.quizTitle, 1, 150) &&
+        isStr(data.subject, 1, 60) &&
+        isStr(data.studentId, 1, 128) &&
+        isStr(data.studentName, 2, 100) &&
+        isOptStr(data, 'parentId', 128) &&
+        isStr(data.teacherId, 1, 128) &&
+        isStr(data.adminId, 1, 128) &&
+        (data.score is number && data.score >= 0 && data.score <= 100) &&
+        (data.totalQuestions is int && data.totalQuestions >= 1 && data.totalQuestions <= 25) &&
+        (data.correctCount is int && data.correctCount >= 0 && data.correctCount <= data.totalQuestions) &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidExamResult(data) {
+      return data.keys().hasAll(['studentId', 'studentName', 'teacherId', 'teacherName', 'adminId', 'subject', 'gradeLevel', 'examName', 'monthLabel', 'score', 'maxScore', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['studentId', 'studentName', 'parentId', 'teacherId', 'teacherName', 'adminId', 'subject', 'gradeLevel', 'examName', 'monthLabel', 'score', 'maxScore', 'remarks', 'createdAt', 'updatedAt']) &&
+        isStr(data.studentId, 1, 128) &&
+        isStr(data.studentName, 2, 100) &&
+        isOptStr(data, 'parentId', 128) &&
+        isStr(data.teacherId, 1, 128) &&
+        isStr(data.teacherName, 2, 100) &&
+        isStr(data.adminId, 1, 128) &&
+        isStr(data.subject, 2, 60) &&
+        isStr(data.gradeLevel, 1, 40) &&
+        isStr(data.examName, 2, 100) &&
+        isStr(data.monthLabel, 2, 40) &&
+        (data.score is number && data.score >= 0 && data.score <= 100) &&
+        (data.maxScore is number && data.maxScore > 0 && data.maxScore <= 100) &&
+        isOptStr(data, 'remarks', 500) &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidAttendance(data) {
+      return data.keys().hasAll(['studentId', 'studentName', 'teacherId', 'adminId', 'gradeLevel', 'dateLabel', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['studentId', 'studentName', 'parentId', 'teacherId', 'adminId', 'gradeLevel', 'dateLabel', 'status', 'note', 'createdAt', 'updatedAt']) &&
+        isStr(data.studentId, 1, 128) &&
+        isStr(data.studentName, 2, 100) &&
+        isOptStr(data, 'parentId', 128) &&
+        isStr(data.teacherId, 1, 128) &&
+        isStr(data.adminId, 1, 128) &&
+        isStr(data.gradeLevel, 1, 40) &&
+        isStr(data.dateLabel, 4, 40) &&
+        data.status in ['PRESENT', 'ABSENT', 'LATE'] &&
+        isOptStr(data, 'note', 300) &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidMaterial(data) {
+      return data.keys().hasAll(['title', 'description', 'subject', 'gradeLevel', 'materialType', 'teacherId', 'teacherName', 'adminId', 'schoolId', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['title', 'description', 'subject', 'gradeLevel', 'materialType', 'resourceUrl', 'contentBody', 'teacherId', 'teacherName', 'adminId', 'schoolId', 'createdAt', 'updatedAt']) &&
+        isStr(data.title, 2, 150) &&
+        isStr(data.description, 2, 1000) &&
+        isStr(data.subject, 2, 60) &&
+        isStr(data.gradeLevel, 1, 40) &&
+        data.materialType in ['PDF', 'BOOK', 'NOTES'] &&
+        isOptStr(data, 'resourceUrl', 500) &&
+        isOptStr(data, 'contentBody', 8000) &&
+        isStr(data.teacherId, 1, 128) &&
+        isStr(data.teacherName, 2, 100) &&
+        isStr(data.adminId, 1, 128) &&
+        data.schoolId == 'koofkeet_main' &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidEarlyWarning(data) {
+      return data.keys().hasAll(['studentId', 'studentName', 'gradeLevel', 'subject', 'previousAverage', 'currentScore', 'dropAmount', 'reason', 'teacherId', 'adminId', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['studentId', 'studentName', 'gradeLevel', 'subject', 'previousAverage', 'currentScore', 'dropAmount', 'reason', 'teacherId', 'adminId', 'status', 'createdAt', 'updatedAt']) &&
+        isStr(data.studentId, 1, 128) &&
+        isStr(data.studentName, 2, 100) &&
+        isStr(data.gradeLevel, 1, 40) &&
+        isStr(data.subject, 2, 60) &&
+        (data.previousAverage is number && data.previousAverage >= 0 && data.previousAverage <= 100) &&
+        (data.currentScore is number && data.currentScore >= 0 && data.currentScore <= 100) &&
+        (data.dropAmount is number && data.dropAmount >= 0 && data.dropAmount <= 100) &&
+        isStr(data.reason, 4, 500) &&
+        isStr(data.teacherId, 1, 128) &&
+        isStr(data.adminId, 1, 128) &&
+        data.status in ['OPEN', 'RESOLVED'] &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidParentMessage(data) {
+      return data.keys().hasAll(['parentId', 'parentName', 'studentId', 'studentName', 'recipientRole', 'recipientId', 'participantUids', 'senderId', 'senderName', 'senderRole', 'subject', 'body', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['parentId', 'parentName', 'studentId', 'studentName', 'recipientRole', 'recipientId', 'participantUids', 'senderId', 'senderName', 'senderRole', 'subject', 'body', 'createdAt', 'updatedAt']) &&
+        isStr(data.parentId, 1, 128) &&
+        isStr(data.parentName, 2, 100) &&
+        isStr(data.studentId, 1, 128) &&
+        isStr(data.studentName, 2, 100) &&
+        data.recipientRole in ['PARENT', 'TEACHER', 'ADMIN'] &&
+        isStr(data.recipientId, 1, 128) &&
+        data.participantUids is list && data.participantUids.size() >= 1 && data.participantUids.size() <= 4 &&
+        data.participantUids[0] is string &&
+        isStr(data.senderId, 1, 128) &&
+        isStr(data.senderName, 2, 100) &&
+        data.senderRole in ['PARENT', 'TEACHER', 'ADMIN'] &&
+        isStr(data.subject, 2, 150) &&
+        isStr(data.body, 1, 3000) &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidAnnouncement(data) {
+      return data.keys().hasAll(['title', 'body', 'category', 'authorId', 'authorName', 'adminId', 'schoolId', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['title', 'body', 'category', 'authorId', 'authorName', 'adminId', 'schoolId', 'createdAt', 'updatedAt']) &&
+        isStr(data.title, 2, 150) &&
+        isStr(data.body, 2, 3000) &&
+        data.category in ['GENERAL', 'EXAM', 'EVENT', 'URGENT'] &&
+        isStr(data.authorId, 1, 128) &&
+        isStr(data.authorName, 2, 100) &&
+        isStr(data.adminId, 1, 128) &&
+        data.schoolId == 'koofkeet_main' &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    // --- COLLECTION RULES ---
+
+    match /school_meta/{metaId} {
+      allow get: if isSignedIn() && isValidId(metaId);
+      allow list: if false;
+      allow create: if isSignedIn() &&
+        metaId == 'initialized' &&
+        isValidSchoolMeta(incoming()) &&
+        incoming().adminUid == request.auth.uid &&
+        !isSchoolInitialized();
+      allow update: if isAdmin() &&
+        metaId == 'initialized' &&
+        isValidSchoolMeta(incoming()) &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if false;
+    }
+
+    match /admins/{uid} {
+      allow get: if isSignedIn() && isValidId(uid) && (request.auth.uid == uid || isAdmin());
+      allow list: if false;
+      allow create: if isSignedIn() &&
+        isValidId(uid) &&
+        request.auth.uid == uid &&
+        isValidAdminDoc(incoming()) &&
+        incoming().userId == uid &&
+        (isBootstrappedAdmin() || !isSchoolInitialized() || isAdmin());
+      allow update, delete: if false;
+    }
+
+    match /role_grants/{emailKey} {
+      allow get: if isSignedIn() && isValidId(emailKey) &&
+        (isAdmin() || (request.auth.token.email_verified == true && existing().email == request.auth.token.email.lower()));
+      allow list: if isSignedIn() &&
+        (resource.data.adminId == request.auth.uid || isBootstrappedAdmin());
+      allow create: if isAdmin() && isValidId(emailKey) && isValidRoleGrant(incoming());
+      allow update: if isSignedIn() && isValidId(emailKey) && isValidRoleGrant(incoming()) &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          isAdmin() ||
+          (
+            request.auth.token.email_verified == true &&
+            existing().email == request.auth.token.email.lower() &&
+            incoming().role == existing().role &&
+            incoming().email == existing().email &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['claimedByUid', 'updatedAt'])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(emailKey);
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) &&
+        (request.auth.uid == userId || isAdmin() || isTeacher());
+      allow list: if isSignedIn() &&
+        (resource.data.userId == request.auth.uid || resource.data.adminId == request.auth.uid || isBootstrappedAdmin());
+      allow create: if isSignedIn() &&
+        isValidId(userId) &&
+        request.auth.uid == userId &&
+        isValidUserProfile(incoming()) &&
+        incoming().userId == userId &&
+        (
+          incoming().role == 'STUDENT' ||
+          (incoming().role == 'ADMIN' && (isBootstrappedAdmin() || existsAfter(/databases/$(database)/documents/admins/$(userId)))) ||
+          (
+            request.auth.token.email_verified == true &&
+            exists(/databases/$(database)/documents/role_grants/$(request.auth.token.email.lower())) &&
+            get(/databases/$(database)/documents/role_grants/$(request.auth.token.email.lower())).data.role == incoming().role
+          )
+        );
+      allow update: if isSignedIn() &&
+        isValidId(userId) &&
+        isValidUserProfile(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          isAdmin() ||
+          (
+            request.auth.uid == userId &&
+            incoming().role == existing().role &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'gradeLevel', 'updatedAt'])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(userId);
+
+      match /ai_chats/{chatId} {
+        allow get: if isSignedIn() && isValidId(chatId) && request.auth.uid == userId;
+        allow list: if isSignedIn() && request.auth.uid == userId;
+        allow create: if isSignedIn() && isValidId(chatId) && request.auth.uid == userId &&
+          isValidAiChat(incoming()) && incoming().userId == userId;
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(chatId) && request.auth.uid == userId;
+      }
+    }
+
+    match /teacher_assignments/{assignmentId} {
+      allow get: if isSignedIn() && isValidId(assignmentId) && existing().schoolId == 'koofkeet_main';
+      allow list: if isSignedIn() && resource.data.schoolId == 'koofkeet_main';
+      allow create: if isAdmin() && isValidId(assignmentId) && isValidTeacherAssignment(incoming());
+      allow update: if isAdmin() && isValidId(assignmentId) && isValidTeacherAssignment(incoming()) &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin() && isValidId(assignmentId);
+    }
+
+    match /student_registrations/{regId} {
+      allow get: if isSignedIn() && isValidId(regId) &&
+        (existing().studentUid == request.auth.uid || existing().parentUid == request.auth.uid ||
+         request.auth.uid in existing().teacherUids || isAdmin() || isTeacher());
+      allow list: if isSignedIn() &&
+        (resource.data.studentUid == request.auth.uid || resource.data.parentUid == request.auth.uid ||
+         resource.data.adminId == request.auth.uid || request.auth.uid in resource.data.teacherUids ||
+         isBootstrappedAdmin());
+      allow create: if isAdmin() && isValidId(regId) && isValidStudentRegistration(incoming());
+      allow update: if isAdmin() && isValidId(regId) && isValidStudentRegistration(incoming()) &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin() && isValidId(regId);
+    }
+
+    match /assignments/{assignmentId} {
+      allow get: if isSignedIn() && isValidId(assignmentId) && existing().schoolId == 'koofkeet_main';
+      allow list: if isSignedIn() && resource.data.schoolId == 'koofkeet_main';
+      allow create: if (isTeacher() || isAdmin()) && isValidId(assignmentId) &&
+        isValidAssignment(incoming()) && incoming().teacherId == request.auth.uid;
+      allow update: if (isTeacher() || isAdmin()) && isValidId(assignmentId) &&
+        isValidAssignment(incoming()) && incoming().createdAt == existing().createdAt &&
+        (isAdmin() || existing().teacherId == request.auth.uid);
+      allow delete: if isValidId(assignmentId) &&
+        (isAdmin() || (isTeacher() && existing().teacherId == request.auth.uid));
+    }
+
+    match /assignment_submissions/{submissionId} {
+      allow get: if isSignedIn() && isValidId(submissionId) &&
+        (existing().studentId == request.auth.uid || existing().parentId == request.auth.uid ||
+         existing().teacherId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() &&
+        (resource.data.studentId == request.auth.uid || resource.data.parentId == request.auth.uid ||
+         resource.data.teacherId == request.auth.uid || resource.data.adminId == request.auth.uid ||
+         isBootstrappedAdmin());
+      allow create: if isSignedIn() && isValidId(submissionId) &&
+        isValidSubmission(incoming()) &&
+        incoming().studentId == request.auth.uid &&
+        incoming().status == 'SUBMITTED' &&
+        exists(/databases/$(database)/documents/assignments/$(incoming().assignmentId));
+      allow update: if isSignedIn() && isValidId(submissionId) &&
+        isValidSubmission(incoming()) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().studentId == existing().studentId &&
+        (
+          isAdmin() ||
+          (
+            isTeacher() &&
+            existing().teacherId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['score', 'feedback', 'status', 'updatedAt'])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(submissionId);
+    }
+
+    match /quizzes/{quizId} {
+      allow get: if isSignedIn() && isValidId(quizId) && existing().schoolId == 'koofkeet_main';
+      allow list: if isSignedIn() && resource.data.schoolId == 'koofkeet_main';
+      allow create: if (isTeacher() || isAdmin()) && isValidId(quizId) &&
+        isValidQuiz(incoming()) && incoming().teacherId == request.auth.uid;
+      allow update: if (isTeacher() || isAdmin()) && isValidId(quizId) &&
+        isValidQuiz(incoming()) && incoming().createdAt == existing().createdAt &&
+        (isAdmin() || existing().teacherId == request.auth.uid);
+      allow delete: if isValidId(quizId) &&
+        (isAdmin() || (isTeacher() && existing().teacherId == request.auth.uid));
+    }
+
+    match /quiz_attempts/{attemptId} {
+      allow get: if isSignedIn() && isValidId(attemptId) &&
+        (existing().studentId == request.auth.uid || existing().parentId == request.auth.uid ||
+         existing().teacherId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() &&
+        (resource.data.studentId == request.auth.uid || resource.data.parentId == request.auth.uid ||
+         resource.data.teacherId == request.auth.uid || resource.data.adminId == request.auth.uid ||
+         isBootstrappedAdmin());
+      allow create: if isSignedIn() && isValidId(attemptId) &&
+        isValidQuizAttempt(incoming()) &&
+        incoming().studentId == request.auth.uid &&
+        exists(/databases/$(database)/documents/quizzes/$(incoming().quizId));
+      allow update, delete: if isAdmin() && isValidId(attemptId);
+    }
+
+    match /exam_results/{resultId} {
+      allow get: if isSignedIn() && isValidId(resultId) &&
+        (existing().studentId == request.auth.uid || existing().parentId == request.auth.uid ||
+         existing().teacherId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() &&
+        (resource.data.studentId == request.auth.uid || resource.data.parentId == request.auth.uid ||
+         resource.data.teacherId == request.auth.uid || resource.data.adminId == request.auth.uid ||
+         isBootstrappedAdmin());
+      allow create: if (isTeacher() || isAdmin()) && isValidId(resultId) &&
+        isValidExamResult(incoming()) && incoming().teacherId == request.auth.uid;
+      allow update: if (isTeacher() || isAdmin()) && isValidId(resultId) &&
+        isValidExamResult(incoming()) && incoming().createdAt == existing().createdAt &&
+        (isAdmin() || existing().teacherId == request.auth.uid);
+      allow delete: if isAdmin() && isValidId(resultId);
+    }
+
+    match /attendance/{attendanceId} {
+      allow get: if isSignedIn() && isValidId(attendanceId) &&
+        (existing().studentId == request.auth.uid || existing().parentId == request.auth.uid ||
+         existing().teacherId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() &&
+        (resource.data.studentId == request.auth.uid || resource.data.parentId == request.auth.uid ||
+         resource.data.teacherId == request.auth.uid || resource.data.adminId == request.auth.uid ||
+         isBootstrappedAdmin());
+      allow create: if (isTeacher() || isAdmin()) && isValidId(attendanceId) &&
+        isValidAttendance(incoming()) && incoming().teacherId == request.auth.uid;
+      allow update: if (isTeacher() || isAdmin()) && isValidId(attendanceId) &&
+        isValidAttendance(incoming()) && incoming().createdAt == existing().createdAt &&
+        (isAdmin() || existing().teacherId == request.auth.uid);
+      allow delete: if isAdmin() && isValidId(attendanceId);
+    }
+
+    match /learning_materials/{materialId} {
+      allow get: if isSignedIn() && isValidId(materialId) && existing().schoolId == 'koofkeet_main';
+      allow list: if isSignedIn() && resource.data.schoolId == 'koofkeet_main';
+      allow create: if (isTeacher() || isAdmin()) && isValidId(materialId) &&
+        isValidMaterial(incoming()) && incoming().teacherId == request.auth.uid;
+      allow update: if (isTeacher() || isAdmin()) && isValidId(materialId) &&
+        isValidMaterial(incoming()) && incoming().createdAt == existing().createdAt &&
+        (isAdmin() || existing().teacherId == request.auth.uid);
+      allow delete: if isValidId(materialId) &&
+        (isAdmin() || (isTeacher() && existing().teacherId == request.auth.uid));
+    }
+
+    match /early_warnings/{warningId} {
+      allow get: if (isTeacher() || isAdmin()) && isValidId(warningId) &&
+        (existing().teacherId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() &&
+        (resource.data.teacherId == request.auth.uid || resource.data.adminId == request.auth.uid ||
+         isBootstrappedAdmin());
+      allow create: if (isTeacher() || isAdmin()) && isValidId(warningId) &&
+        isValidEarlyWarning(incoming()) && incoming().teacherId == request.auth.uid;
+      allow update: if (isTeacher() || isAdmin()) && isValidId(warningId) &&
+        isValidEarlyWarning(incoming()) && incoming().createdAt == existing().createdAt &&
+        (isAdmin() || existing().teacherId == request.auth.uid) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(warningId);
+    }
+
+    match /parent_messages/{messageId} {
+      allow get: if isSignedIn() && isValidId(messageId) &&
+        (request.auth.uid in existing().participantUids || isBootstrappedAdmin());
+      allow list: if isSignedIn() &&
+        (request.auth.uid in resource.data.participantUids || isBootstrappedAdmin());
+      allow create: if isSignedIn() && isValidId(messageId) &&
+        isValidParentMessage(incoming()) &&
+        incoming().senderId == request.auth.uid &&
+        request.auth.uid in incoming().participantUids &&
+        !(incoming().studentId in incoming().participantUids) &&
+        (isParent() || isTeacher() || isAdmin());
+      allow update, delete: if isAdmin() && isValidId(messageId);
+    }
+
+    match /announcements/{announcementId} {
+      allow get: if isSignedIn() && isValidId(announcementId) && existing().schoolId == 'koofkeet_main';
+      allow list: if isSignedIn() && resource.data.schoolId == 'koofkeet_main';
+      allow create: if (isAdmin() || isTeacher()) && isValidId(announcementId) &&
+        isValidAnnouncement(incoming()) && incoming().authorId == request.auth.uid;
+      allow update: if (isAdmin() || isTeacher()) && isValidId(announcementId) &&
+        isValidAnnouncement(incoming()) && incoming().createdAt == existing().createdAt &&
+        (isAdmin() || existing().authorId == request.auth.uid);
+      allow delete: if isAdmin() && isValidId(announcementId);
+    }
+  }
+}

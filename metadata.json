@@ -1,0 +1,6 @@
+{
+  "name": "Koofkeet School",
+  "description": "Kofket School App Management System (Application Mana Barumsaa Koofkeet) - Jalqabni Ogummaa Waaqayyoon Sodaachuudha (Fkn 1:7)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

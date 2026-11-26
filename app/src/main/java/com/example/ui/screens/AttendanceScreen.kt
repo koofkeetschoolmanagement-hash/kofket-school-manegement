@@ -15,6 +15,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -22,13 +25,17 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.HowToReg
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -48,14 +55,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.core.AttendanceDateHelper
+import com.example.core.ReportExporter
+import kotlinx.coroutines.launch
 import com.example.core.LocalAppLanguage
 import com.example.core.LocalizedLoginStrings
 import com.example.core.stringsFor
@@ -82,6 +93,34 @@ private data class RosterRowItem(
     val section: String
 )
 
+/**
+ * Multi-token smart search across student name, grade, date, note, and localized attendance status.
+ */
+fun matchesAttendanceSmartQuery(
+    query: String,
+    studentName: String,
+    gradeLevel: String,
+    statusRaw: String,
+    dateLabel: String = "",
+    note: String = ""
+): Boolean {
+    val trimmed = query.trim()
+    if (trimmed.isEmpty()) return true
+    val tokens = trimmed.lowercase().split("\\s+".toRegex()).filter { it.isNotBlank() }
+    val normStatus = statusRaw.trim().uppercase()
+    return tokens.all { token ->
+        studentName.lowercase().contains(token) ||
+            gradeLevel.lowercase().contains(token) ||
+            dateLabel.lowercase().contains(token) ||
+            note.lowercase().contains(token) ||
+            normStatus.lowercase().contains(token) ||
+            (token in listOf("present", "argamaa", "argame", "ተገኝቷል", "jira", "qooddate") && normStatus == "PRESENT") ||
+            (token in listOf("absent", "dhibame", "hafe", "ቀሪ", "bade", "hin jirre") && normStatus == "ABSENT") ||
+            (token in listOf("late", "turte", "ture", "ዘግይቷል", "barfate") && normStatus == "LATE") ||
+            (token in listOf("unmarked", "hin galmoofne", "galmee hin qabne", "ያልተመዘገበ", "haaraa", "empty") && normStatus == "UNMARKED")
+    }
+}
+
 @Composable
 fun AttendanceTab(
     profile: UserProfile,
@@ -94,6 +133,8 @@ fun AttendanceTab(
     syncStatus: AttendanceSyncStatus = AttendanceSyncStatus(),
     onSyncAttendance: () -> Unit = {}
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val strings = stringsFor(LocalAppLanguage.current)
     var viewMode by remember(canManage) {
         mutableStateOf(if (canManage) AttendanceViewMode.ROLL_CALL else AttendanceViewMode.HISTORY)
@@ -101,6 +142,7 @@ fun AttendanceTab(
     var selectedDate by remember { mutableStateOf(AttendanceDateHelper.todayDateLabel()) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedGrade by remember { mutableStateOf<String?>(null) }
+    var rollCallStatusFilter by remember { mutableStateOf<String?>(null) } // null = All, "PRESENT", "ABSENT", "LATE", "UNMARKED"
     var historyStatusFilter by remember { mutableStateOf<AttendanceStatus?>(null) }
     var showAddDialog by remember { mutableStateOf(false) }
     var noteDialogTarget by remember { mutableStateOf<Pair<RosterRowItem, AttendanceRecord?>?>(null) }
@@ -146,27 +188,114 @@ fun AttendanceTab(
         recordsForSelectedDate.associateBy { it.studentId.ifBlank { it.studentName } }
     }
 
-    val filteredRoster = remember(mergedRoster, selectedGrade, searchQuery) {
-        val q = searchQuery.trim().lowercase()
+    val filteredRoster = remember(mergedRoster, selectedGrade, rollCallStatusFilter, searchQuery, recordByStudentForDate) {
+        val q = searchQuery.trim()
         mergedRoster.filter { row ->
-            (selectedGrade == null || row.gradeLevel == selectedGrade) &&
-                (q.isEmpty() || row.studentName.lowercase().contains(q) || row.gradeLevel.lowercase().contains(q))
+            val record = recordByStudentForDate[row.studentId]
+            val currentStatus = record?.status ?: "UNMARKED"
+            val matchesGrade = (selectedGrade == null || row.gradeLevel == selectedGrade)
+            val matchesStatusFilter = when (rollCallStatusFilter) {
+                null -> true
+                "UNMARKED" -> record == null
+                else -> currentStatus == rollCallStatusFilter
+            }
+            val matchesQuery = matchesAttendanceSmartQuery(
+                query = q,
+                studentName = row.studentName,
+                gradeLevel = row.gradeLevel,
+                statusRaw = currentStatus,
+                dateLabel = selectedDate,
+                note = record?.note.orEmpty()
+            )
+            matchesGrade && matchesStatusFilter && matchesQuery
         }
     }
 
     val sortedHistory = remember(attendance, historyStatusFilter, searchQuery) {
-        val q = searchQuery.trim().lowercase()
+        val q = searchQuery.trim()
         attendance
             .filter { rec ->
-                (historyStatusFilter == null || AttendanceStatus.fromRaw(rec.status) == historyStatusFilter) &&
-                    (q.isEmpty() || rec.studentName.lowercase().contains(q) ||
-                        rec.dateLabel.lowercase().contains(q) || rec.gradeLevel.lowercase().contains(q))
+                val matchesStatus = (historyStatusFilter == null || AttendanceStatus.fromRaw(rec.status) == historyStatusFilter)
+                val matchesQuery = matchesAttendanceSmartQuery(
+                    query = q,
+                    studentName = rec.studentName,
+                    gradeLevel = rec.gradeLevel,
+                    statusRaw = rec.status,
+                    dateLabel = rec.dateLabel,
+                    note = rec.note
+                )
+                matchesStatus && matchesQuery
             }
             .sortedWith(
                 compareByDescending<AttendanceRecord> { it.dateLabel }
                     .thenByDescending { it.updatedAt?.seconds ?: it.createdAt?.seconds ?: 0L }
                     .thenBy { it.studentName.lowercase() }
             )
+    }
+
+    val rollCallRecordsToExport = remember(filteredRoster, recordByStudentForDate, selectedDate) {
+        filteredRoster.map { row ->
+            recordByStudentForDate[row.studentId] ?: AttendanceRecord(
+                id = "roll_${row.studentId}_$selectedDate",
+                studentId = row.studentId,
+                studentName = row.studentName,
+                parentId = row.parentId,
+                gradeLevel = row.gradeLevel,
+                dateLabel = selectedDate,
+                status = "UNMARKED",
+                note = ""
+            )
+        }
+    }
+
+    val csvLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val records = if (viewMode == AttendanceViewMode.ROLL_CALL) rollCallRecordsToExport else sortedHistory
+                val title = if (viewMode == AttendanceViewMode.ROLL_CALL) {
+                    "Koofkeet School Attendance Roll Call - $selectedDate"
+                } else {
+                    "Koofkeet School Attendance History (${records.size} Records)"
+                }
+                val res = ReportExporter.exportAttendanceCsv(context, uri, records, title)
+                if (res.isSuccess) {
+                    Toast.makeText(context, strings.attendanceExportSuccessToast, Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(
+                        context,
+                        "${strings.exportFailedPrefix}: ${res.exceptionOrNull()?.message.orEmpty()}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    val pdfLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/pdf")
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val records = if (viewMode == AttendanceViewMode.ROLL_CALL) rollCallRecordsToExport else sortedHistory
+                val title = if (viewMode == AttendanceViewMode.ROLL_CALL) {
+                    "KOOFKEET SCHOOL - ARGAMAA ($selectedDate)"
+                } else {
+                    "KOOFKEET SCHOOL - ATTENDANCE HISTORY"
+                }
+                val res = ReportExporter.exportAttendancePdf(context, uri, records, title)
+                if (res.isSuccess) {
+                    Toast.makeText(context, strings.attendanceExportSuccessToast, Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(
+                        context,
+                        "${strings.exportFailedPrefix}: ${res.exceptionOrNull()?.message.orEmpty()}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
     }
 
     LazyColumn(
@@ -362,16 +491,165 @@ fun AttendanceTab(
             }
 
             item {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                    placeholder = { Text(strings.attendanceSearchPlaceholder) },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("attendance_search_input")
-                )
+                Card(
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Search,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            trailingIcon = {
+                                if (searchQuery.isNotEmpty()) {
+                                    IconButton(
+                                        onClick = { searchQuery = "" },
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .testTag("attendance_clear_search_button")
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Clear,
+                                            contentDescription = "Clear search",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            },
+                            placeholder = {
+                                Text(
+                                    text = strings.attendanceSmartSearchHint,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("attendance_search_input")
+                        )
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            FilterChip(
+                                selected = rollCallStatusFilter == null,
+                                onClick = { rollCallStatusFilter = null },
+                                label = { Text(strings.attendanceAllStatuses) },
+                                modifier = Modifier.testTag("filter_status_all")
+                            )
+                            FilterChip(
+                                selected = rollCallStatusFilter == AttendanceStatus.PRESENT.name,
+                                onClick = {
+                                    rollCallStatusFilter = if (rollCallStatusFilter == AttendanceStatus.PRESENT.name) null else AttendanceStatus.PRESENT.name
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                                },
+                                label = { Text(strings.attendancePresent) },
+                                modifier = Modifier.testTag("filter_status_present")
+                            )
+                            FilterChip(
+                                selected = rollCallStatusFilter == AttendanceStatus.ABSENT.name,
+                                onClick = {
+                                    rollCallStatusFilter = if (rollCallStatusFilter == AttendanceStatus.ABSENT.name) null else AttendanceStatus.ABSENT.name
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.Cancel, contentDescription = null, modifier = Modifier.size(16.dp))
+                                },
+                                label = { Text(strings.attendanceAbsent) },
+                                modifier = Modifier.testTag("filter_status_absent")
+                            )
+                            FilterChip(
+                                selected = rollCallStatusFilter == AttendanceStatus.LATE.name,
+                                onClick = {
+                                    rollCallStatusFilter = if (rollCallStatusFilter == AttendanceStatus.LATE.name) null else AttendanceStatus.LATE.name
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.Schedule, contentDescription = null, modifier = Modifier.size(16.dp))
+                                },
+                                label = { Text(strings.attendanceLate) },
+                                modifier = Modifier.testTag("filter_status_late")
+                            )
+                            FilterChip(
+                                selected = rollCallStatusFilter == "UNMARKED",
+                                onClick = {
+                                    rollCallStatusFilter = if (rollCallStatusFilter == "UNMARKED") null else "UNMARKED"
+                                },
+                                label = { Text(strings.attendanceFilterUnmarked) },
+                                modifier = Modifier.testTag("filter_status_unmarked")
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                            ) {
+                                Text(
+                                    text = "${strings.attendanceResultsFoundPrefix}${filteredRoster.size}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                OutlinedButton(
+                                    onClick = {
+                                        val filename = "koofkeet_attendance_${selectedDate.replace("-", "_")}.csv"
+                                        csvLauncher.launch(filename)
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    modifier = Modifier
+                                        .heightIn(min = 40.dp)
+                                        .testTag("attendance_export_csv_button")
+                                ) {
+                                    Icon(Icons.Filled.TableChart, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(strings.attendanceExportCsvButton, style = MaterialTheme.typography.labelSmall)
+                                }
+
+                                Button(
+                                    onClick = {
+                                        val filename = "koofkeet_attendance_${selectedDate.replace("-", "_")}.pdf"
+                                        pdfLauncher.launch(filename)
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    modifier = Modifier
+                                        .heightIn(min = 40.dp)
+                                        .testTag("attendance_export_pdf_button")
+                                ) {
+                                    Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(strings.attendanceExportPdfButton, style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             if (filteredRoster.isEmpty()) {
@@ -454,32 +732,129 @@ fun AttendanceTab(
             }
 
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                        placeholder = { Text(strings.attendanceSearchPlaceholder) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Row(
+                Card(
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        FilterChip(
-                            selected = historyStatusFilter == null,
-                            onClick = { historyStatusFilter = null },
-                            label = { Text(strings.attendanceAllStatuses) }
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Search,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            trailingIcon = {
+                                if (searchQuery.isNotEmpty()) {
+                                    IconButton(
+                                        onClick = { searchQuery = "" },
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .testTag("attendance_history_clear_search_button")
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Clear,
+                                            contentDescription = "Clear search",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            },
+                            placeholder = {
+                                Text(
+                                    text = strings.attendanceSmartSearchHint,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("attendance_history_search_input")
                         )
-                        AttendanceStatus.entries.forEach { st ->
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             FilterChip(
-                                selected = historyStatusFilter == st,
-                                onClick = { historyStatusFilter = if (historyStatusFilter == st) null else st },
-                                label = { Text(localizedAttendanceStatus(st, strings)) }
+                                selected = historyStatusFilter == null,
+                                onClick = { historyStatusFilter = null },
+                                label = { Text(strings.attendanceAllStatuses) },
+                                modifier = Modifier.testTag("filter_history_status_all")
                             )
+                            AttendanceStatus.entries.forEach { st ->
+                                FilterChip(
+                                    selected = historyStatusFilter == st,
+                                    onClick = { historyStatusFilter = if (historyStatusFilter == st) null else st },
+                                    label = { Text(localizedAttendanceStatus(st, strings)) },
+                                    modifier = Modifier.testTag("filter_history_status_${st.name.lowercase()}")
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                            ) {
+                                Text(
+                                    text = "${strings.attendanceResultsFoundPrefix}${sortedHistory.size}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                OutlinedButton(
+                                    onClick = {
+                                        val filename = "koofkeet_attendance_history_${AttendanceDateHelper.todayDateLabel().replace("-", "_")}.csv"
+                                        csvLauncher.launch(filename)
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    modifier = Modifier
+                                        .heightIn(min = 40.dp)
+                                        .testTag("attendance_history_export_csv_button")
+                                ) {
+                                    Icon(Icons.Filled.TableChart, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(strings.attendanceExportCsvButton, style = MaterialTheme.typography.labelSmall)
+                                }
+
+                                Button(
+                                    onClick = {
+                                        val filename = "koofkeet_attendance_history_${AttendanceDateHelper.todayDateLabel().replace("-", "_")}.pdf"
+                                        pdfLauncher.launch(filename)
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    modifier = Modifier
+                                        .heightIn(min = 40.dp)
+                                        .testTag("attendance_history_export_pdf_button")
+                                ) {
+                                    Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(strings.attendanceExportPdfButton, style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
                         }
                     }
                 }

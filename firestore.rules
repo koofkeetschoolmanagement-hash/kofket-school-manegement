@@ -361,6 +361,28 @@ service cloud.firestore {
         isValidTimestamp(data.updatedAt);
     }
 
+    function isValidLessonPlan(data) {
+      return data.keys().hasAll(['title', 'subject', 'gradeLevel', 'weekLabel', 'startDateLabel', 'endDateLabel', 'objectives', 'dailyBreakdown', 'teacherId', 'teacherName', 'adminId', 'schoolId', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['title', 'subject', 'gradeLevel', 'weekLabel', 'startDateLabel', 'endDateLabel', 'objectives', 'dailyBreakdown', 'resources', 'homeworkSummary', 'teacherId', 'teacherName', 'adminId', 'schoolId', 'status', 'createdAt', 'updatedAt']) &&
+        isStr(data.title, 2, 150) &&
+        isStr(data.subject, 2, 60) &&
+        isStr(data.gradeLevel, 1, 40) &&
+        isStr(data.weekLabel, 1, 60) &&
+        isStr(data.startDateLabel, 4, 40) &&
+        isStr(data.endDateLabel, 4, 40) &&
+        isStr(data.objectives, 2, 3000) &&
+        isStr(data.dailyBreakdown, 2, 6000) &&
+        isOptStr(data, 'resources', 2000) &&
+        isOptStr(data, 'homeworkSummary', 2000) &&
+        isStr(data.teacherId, 1, 128) &&
+        isStr(data.teacherName, 2, 100) &&
+        isStr(data.adminId, 1, 128) &&
+        data.schoolId == 'koofkeet_main' &&
+        data.status in ['PUBLISHED', 'DRAFT'] &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
     // --- COLLECTION RULES ---
 
     match /school_meta/{metaId} {
@@ -653,6 +675,18 @@ service cloud.firestore {
         (isAdmin() || existing().createdByUid == request.auth.uid);
       allow delete: if isValidId(eventId) &&
         (isAdmin() || (isTeacher() && existing().createdByUid == request.auth.uid));
+    }
+
+    match /lesson_plans/{planId} {
+      allow get: if isSignedIn() && isValidId(planId) && existing().schoolId == 'koofkeet_main';
+      allow list: if isSignedIn() && resource.data.schoolId == 'koofkeet_main';
+      allow create: if (isTeacher() || isAdmin()) && isValidId(planId) &&
+        isValidLessonPlan(incoming()) && incoming().teacherId == request.auth.uid;
+      allow update: if (isTeacher() || isAdmin()) && isValidId(planId) &&
+        isValidLessonPlan(incoming()) && incoming().createdAt == existing().createdAt &&
+        (isAdmin() || existing().teacherId == request.auth.uid);
+      allow delete: if isValidId(planId) &&
+        (isAdmin() || (isTeacher() && existing().teacherId == request.auth.uid));
     }
   }
 }

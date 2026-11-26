@@ -192,7 +192,22 @@ data class LocalizedLoginStrings(
     val notificationTitle: String,
     val notificationSubtitle: String,
     val studentProfileTitle: String,
-    val downloadBooksButton: String
+    val downloadBooksButton: String,
+    val attendanceTrendsTitle: String,
+    val attendanceTrendsSubtitle: String,
+    val attendanceTrendsMonthAverage: String,
+    val attendanceTrendsDaysTracked: String,
+    val attendanceTrendsPeakDay: String,
+    val attendanceTrendsLowDay: String,
+    val attendanceTrendsFilterAllGrades: String,
+    val attendanceTrendsEmptyNotice: String,
+    val attendanceSmartSearchHint: String,
+    val attendanceExportButton: String,
+    val attendanceExportCsvButton: String,
+    val attendanceExportPdfButton: String,
+    val attendanceExportSuccessToast: String,
+    val attendanceFilterUnmarked: String,
+    val attendanceResultsFoundPrefix: String
 )
 
 fun stringsFor(language: AppLanguage): LocalizedLoginStrings = when (language) {
@@ -355,7 +370,22 @@ fun stringsFor(language: AppLanguage): LocalizedLoginStrings = when (language) {
         notificationTitle = "Beeksisa (Notifications)",
         notificationSubtitle = "Beeksisoota har'aa fi dursa-beeksisaa",
         studentProfileTitle = "Profile Barataa (Student Profile)",
-        downloadBooksButton = "Kitaabilee Buufadhu"
+        downloadBooksButton = "Kitaabilee Buufadhu",
+        attendanceTrendsTitle = "Chaartii Argamaa Ji'aa (Attendance Trends)",
+        attendanceTrendsSubtitle = "Haalata argamaa barattootaa ji'a ammaa chaartiidhaan ilaalaa",
+        attendanceTrendsMonthAverage = "Giddu-galeessa Ji'aa",
+        attendanceTrendsDaysTracked = "Guyyoota Galmaa'an",
+        attendanceTrendsPeakDay = "Guyyaa Ol'aanaa",
+        attendanceTrendsLowDay = "Guyyaa Gad'aanaa",
+        attendanceTrendsFilterAllGrades = "Kutaa Hunda",
+        attendanceTrendsEmptyNotice = "Ji'a kanaaf ragaan argamaa chaartii irratti mul'atu hin jiru. Galmee har'aa irratti barattoota marsee galchaa.",
+        attendanceSmartSearchHint = "Maqaa, kutaa, haala (Present/Absent), ykn guyyaan barbaadi...",
+        attendanceExportButton = "Ragaa Argamaa Baasi (Export)",
+        attendanceExportCsvButton = "CSV Baasi",
+        attendanceExportPdfButton = "PDF Baasi",
+        attendanceExportSuccessToast = "Ragaan argamaa milkaa'inaan baafameera!",
+        attendanceFilterUnmarked = "Galmee Hin Qabne",
+        attendanceResultsFoundPrefix = "Barattoota argaman: "
     )
 
     AppLanguage.ENGLISH -> LocalizedLoginStrings(
@@ -517,7 +547,22 @@ fun stringsFor(language: AppLanguage): LocalizedLoginStrings = when (language) {
         notificationTitle = "Notifications & Alerts",
         notificationSubtitle = "School announcements and early warning alerts",
         studentProfileTitle = "Student Profile",
-        downloadBooksButton = "Download Books"
+        downloadBooksButton = "Download Books",
+        attendanceTrendsTitle = "Monthly Attendance Trends",
+        attendanceTrendsSubtitle = "Track daily student presence rates and attendance flow over the current month",
+        attendanceTrendsMonthAverage = "Monthly Average",
+        attendanceTrendsDaysTracked = "Days Tracked",
+        attendanceTrendsPeakDay = "Peak Day",
+        attendanceTrendsLowDay = "Lowest Day",
+        attendanceTrendsFilterAllGrades = "All Grades",
+        attendanceTrendsEmptyNotice = "No attendance sessions recorded for this month yet. Mark roll call below to see trends.",
+        attendanceSmartSearchHint = "Smart search by name, grade, status, or date...",
+        attendanceExportButton = "Export Attendance Data",
+        attendanceExportCsvButton = "Export CSV",
+        attendanceExportPdfButton = "Export PDF",
+        attendanceExportSuccessToast = "Attendance data exported successfully!",
+        attendanceFilterUnmarked = "Unmarked",
+        attendanceResultsFoundPrefix = "Results found: "
     )
 
     AppLanguage.AMHARIC -> LocalizedLoginStrings(
@@ -679,7 +724,22 @@ fun stringsFor(language: AppLanguage): LocalizedLoginStrings = when (language) {
         notificationTitle = "ማስታወቂያዎች እና መልዕክቶች (Notifications)",
         notificationSubtitle = "የትምህርት ቤት ማስታወቂያዎች እና የቅድመ ማስጠንቀቂያ መልዕክቶች",
         studentProfileTitle = "የተማሪ መገለጫ (Student Profile)",
-        downloadBooksButton = "መጻሕፍትን አውርድ (Download Books)"
+        downloadBooksButton = "መጻሕፍትን አውርድ (Download Books)",
+        attendanceTrendsTitle = "የወሩ የመገኘት አዝማሚያ (Attendance Trends)",
+        attendanceTrendsSubtitle = "የዚህን ወር የተማሪዎች የቀን ተቀን መገኘት በግራፍና ቻርት ይመልከቱ",
+        attendanceTrendsMonthAverage = "የወሩ አማካይ",
+        attendanceTrendsDaysTracked = "የተመዘገቡ ቀናት",
+        attendanceTrendsPeakDay = "ከፍተኛው ቀን",
+        attendanceTrendsLowDay = "ዝቅተኛው ቀን",
+        attendanceTrendsFilterAllGrades = "ሁሉም ክፍሎች",
+        attendanceTrendsEmptyNotice = "ለዚህ ወር እስካሁን የተመዘገበ የመገኘት መረጃ የለም። አዝማሚያውን ለማየት ከታች መገኘትን ይመዝግቡ።",
+        attendanceSmartSearchHint = "በስም፣ በክፍል፣ በሁኔታ ወይም በቀን ብልህ ፍለጋ...",
+        attendanceExportButton = "የመገኘት መረጃን አውርድ (Export)",
+        attendanceExportCsvButton = "CSV አውርድ",
+        attendanceExportPdfButton = "PDF አውርድ",
+        attendanceExportSuccessToast = "የመገኘት መረጃው በተሳካ ሁኔታ ወርዷል!",
+        attendanceFilterUnmarked = "ያልተመዘገቡ",
+        attendanceResultsFoundPrefix = "የተገኙ ውጤቶች፦ "
     )
 }
 

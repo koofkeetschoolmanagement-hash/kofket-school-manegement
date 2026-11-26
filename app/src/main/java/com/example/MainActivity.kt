@@ -831,7 +831,12 @@ private fun KoofkeetMainShell(
                         profile = profile,
                         examResults = examResults,
                         attendance = attendance,
-                        earlyWarnings = earlyWarnings
+                        earlyWarnings = earlyWarnings,
+                        students = studentRoster,
+                        onOpenAttendance = {
+                            requestedAcademicSection = com.example.ui.screens.AcademicSection.ATTENDANCE
+                            guardedNavigate(AppRoute.ACADEMICS.routeId)
+                        }
                     )
                     AppRoute.NOTIFICATIONS -> com.example.ui.screens.NotificationScreen(
                         announcements = announcements,

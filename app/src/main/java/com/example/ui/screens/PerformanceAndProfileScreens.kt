@@ -96,7 +96,9 @@ fun PerformanceDashboardScreen(
     examResults: List<ExamResult>,
     attendance: List<AttendanceRecord>,
     earlyWarnings: List<EarlyWarning>,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    students: List<StudentRegistration> = emptyList(),
+    onOpenAttendance: () -> Unit = {}
 ) {
     val strings = stringsFor(LocalAppLanguage.current)
     val avgScore = if (examResults.isEmpty()) 0.0 else examResults.map { it.score }.average()
@@ -238,6 +240,14 @@ fun PerformanceDashboardScreen(
                         }
                     }
                 }
+            }
+
+            item {
+                TeacherAttendanceTrendsChartCard(
+                    attendance = attendance,
+                    students = students,
+                    onOpenAttendance = onOpenAttendance
+                )
             }
 
             item {

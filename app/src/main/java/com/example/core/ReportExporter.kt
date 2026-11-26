@@ -93,6 +93,162 @@ object ReportExporter {
         }
     }
 
+    suspend fun exportAttendanceCsv(
+        context: Context,
+        uri: Uri,
+        records: List<AttendanceRecord>,
+        title: String = "Koofkeet School Attendance Report"
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val outputStream = context.contentResolver.openOutputStream(uri)
+                ?: return@withContext Result.failure(IllegalStateException("Unable to open CSV destination"))
+            val csv = buildAttendanceCsvContent(records, title)
+            outputStream.use { stream ->
+                stream.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
+                stream.write(csv.toByteArray(Charsets.UTF_8))
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    fun buildAttendanceCsvContent(
+        records: List<AttendanceRecord>,
+        title: String
+    ): String {
+        fun esc(value: String): String {
+            val clean = value.replace("\r\n", " ").replace("\n", " ")
+            return "\"${clean.replace("\"", "\"\"")}\""
+        }
+        val presentCount = records.count { it.status == "PRESENT" }
+        val absentCount = records.count { it.status == "ABSENT" }
+        val lateCount = records.count { it.status == "LATE" }
+        val total = records.size
+        val rate = if (total > 0) (presentCount.toDouble() / total.toDouble()) * 100.0 else 0.0
+
+        return buildString {
+            appendLine("Attendance Report,${esc(title)},,,,")
+            appendLine("Summary,Total Records,${total},Present,${presentCount},Absent,${absentCount},Late,${lateCount},Attendance Rate,${"%.1f".format(rate)}%")
+            appendLine("")
+            appendLine("Date,Student Name,Grade Level,Status,Note")
+            records.forEach { rec ->
+                appendLine(
+                    "${esc(rec.dateLabel)},${esc(rec.studentName)},${esc(rec.gradeLevel)},${esc(rec.status)},${esc(rec.note)}"
+                )
+            }
+        }
+    }
+
+    suspend fun exportAttendancePdf(
+        context: Context,
+        uri: Uri,
+        records: List<AttendanceRecord>,
+        title: String = "KOOFKEET SCHOOL - GABAASA ARGAMAA"
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val outputStream = context.contentResolver.openOutputStream(uri)
+                ?: return@withContext Result.failure(IllegalStateException("Unable to open PDF destination"))
+            outputStream.use { stream ->
+                writeAttendancePdfToStream(stream, records, title)
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun writeAttendancePdfToStream(stream: OutputStream, records: List<AttendanceRecord>, title: String) {
+        val document = PdfDocument()
+        val pageWidth = 595
+        val pageHeight = 842
+        var pageNum = 1
+        var pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNum).create()
+        var page = document.startPage(pageInfo)
+        var canvas = page.canvas
+
+        val headerBgPaint = Paint().apply { color = Color.rgb(15, 76, 58) }
+        val titlePaint = Paint().apply {
+            color = Color.WHITE
+            textSize = 16f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        val subtitlePaint = Paint().apply {
+            color = Color.rgb(255, 229, 158)
+            textSize = 10.5f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
+        }
+        val sectionPaint = Paint().apply {
+            color = Color.rgb(15, 76, 58)
+            textSize = 12f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        val bodyPaint = Paint().apply {
+            color = Color.rgb(20, 30, 26)
+            textSize = 10f
+        }
+        val linePaint = Paint().apply {
+            color = Color.rgb(191, 203, 195)
+            strokeWidth = 1f
+        }
+        val footerPaint = Paint().apply {
+            color = Color.rgb(90, 105, 96)
+            textSize = 9f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
+        }
+
+        canvas.drawRect(0f, 0f, pageWidth.toFloat(), 80f, headerBgPaint)
+        canvas.drawText(title, 36f, 34f, titlePaint)
+        canvas.drawText("\"Jalqabni Ogummaa Waaqayyoon Sodaachuudha.\" Fkn 1:7", 36f, 52f, subtitlePaint)
+        canvas.drawText("Total Records: ${records.size}", 36f, 68f, subtitlePaint)
+
+        var y = 105f
+        val presentCount = records.count { it.status == "PRESENT" }
+        val absentCount = records.count { it.status == "ABSENT" }
+        val lateCount = records.count { it.status == "LATE" }
+        val total = records.size
+        val rate = if (total > 0) (presentCount.toDouble() / total.toDouble()) * 100.0 else 0.0
+
+        canvas.drawText("Cuunfaa: Argamaa ${"%.1f".format(rate)}% • Present: $presentCount • Absent: $absentCount • Late: $lateCount", 36f, y, sectionPaint)
+        y += 10f
+        canvas.drawLine(36f, y, pageWidth - 36f, y, linePaint)
+        y += 18f
+
+        if (records.isEmpty()) {
+            canvas.drawText("Ragaan argamaa hin jiru.", 44f, y, bodyPaint)
+        } else {
+            records.forEach { rec ->
+                if (y > pageHeight - 60f) {
+                    canvas.drawText(
+                        "Mana Barumsaa Koofkeet • Qopheessaan Fayyeeraa Taaddasaa",
+                        36f,
+                        pageHeight - 20f,
+                        footerPaint
+                    )
+                    document.finishPage(page)
+                    pageNum++
+                    pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNum).create()
+                    page = document.startPage(pageInfo)
+                    canvas = page.canvas
+                    y = 40f
+                }
+                val line = "${rec.dateLabel} | ${rec.studentName} (${rec.gradeLevel}) — [${rec.status}] ${if (rec.note.isNotBlank()) "Note: " + rec.note else ""}"
+                canvas.drawText(line, 44f, y, bodyPaint)
+                y += 15f
+            }
+        }
+
+        canvas.drawText(
+            "Mana Barumsaa Koofkeet • Qopheessaan Fayyeeraa Taaddasaa",
+            36f,
+            pageHeight - 20f,
+            footerPaint
+        )
+        document.finishPage(page)
+        document.writeTo(stream)
+        document.close()
+    }
+
     fun buildCsvContent(
         report: MonthlyReportData,
         examResults: List<ExamResult> = emptyList(),

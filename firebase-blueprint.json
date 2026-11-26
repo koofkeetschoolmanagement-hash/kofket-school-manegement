@@ -319,6 +319,31 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["title", "body", "category", "authorId", "authorName", "adminId", "schoolId", "createdAt", "updatedAt"]
+    },
+    "LessonPlan": {
+      "title": "LessonPlan",
+      "description": "Weekly curriculum and learning guide prepared by teachers for a grade and subject.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "subject": { "type": "string" },
+        "gradeLevel": { "type": "string" },
+        "weekLabel": { "type": "string" },
+        "startDateLabel": { "type": "string" },
+        "endDateLabel": { "type": "string" },
+        "objectives": { "type": "string" },
+        "dailyBreakdown": { "type": "string" },
+        "resources": { "type": "string" },
+        "homeworkSummary": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "adminId": { "type": "string" },
+        "schoolId": { "type": "string" },
+        "status": { "type": "string", "enum": ["PUBLISHED", "DRAFT"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "subject", "gradeLevel", "weekLabel", "startDateLabel", "endDateLabel", "objectives", "dailyBreakdown", "teacherId", "teacherName", "adminId", "schoolId", "status", "createdAt", "updatedAt"]
     }
   },
   "firestore": {

@@ -268,6 +268,13 @@ fun DashboardScreen(
                     )
                 }
                 item {
+                    TeacherAttendanceTrendsChartCard(
+                        attendance = attendance,
+                        students = students,
+                        onOpenAttendance = onOpenAttendance
+                    )
+                }
+                item {
                     TeacherDailyAttendanceCard(
                         students = students,
                         attendance = attendance,

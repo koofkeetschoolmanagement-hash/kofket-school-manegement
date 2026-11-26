@@ -23,6 +23,10 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\.\\-]+$');
     }
 
+    function isValidEmailKey(key) {
+      return key is string && key.size() >= 3 && key.size() <= 150 && key.matches('^[a-zA-Z0-9_.+\\-]+@[a-zA-Z0-9.\\-]+$');
+    }
+
     function isStr(val, minLen, maxLen) {
       return val is string && val.size() >= minLen && val.size() <= maxLen;
     }
@@ -102,11 +106,12 @@ service cloud.firestore {
 
     function isValidUserProfile(data) {
       return data.keys().hasAll(['userId', 'displayName', 'email', 'role', 'adminId', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['userId', 'displayName', 'email', 'role', 'gradeLevel', 'subject', 'linkedStudentId', 'linkedStudentName', 'adminId', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['userId', 'displayName', 'email', 'role', 'preferredLanguage', 'gradeLevel', 'subject', 'linkedStudentId', 'linkedStudentName', 'adminId', 'createdAt', 'updatedAt']) &&
         isStr(data.userId, 1, 128) &&
         isStr(data.displayName, 2, 100) &&
         isStr(data.email, 3, 150) &&
         data.role in ['STUDENT', 'TEACHER', 'PARENT', 'ADMIN'] &&
+        (!('preferredLanguage' in data) || data.preferredLanguage in ['om', 'en', 'am']) &&
         isOptStr(data, 'gradeLevel', 40) &&
         isOptStr(data, 'subject', 60) &&
         isOptStr(data, 'linkedStudentId', 128) &&
@@ -335,6 +340,27 @@ service cloud.firestore {
         isValidTimestamp(data.updatedAt);
     }
 
+    function isValidCalendarEvent(data) {
+      return data.keys().hasAll(['title', 'eventDateLabel', 'startTimeLabel', 'endTimeLabel', 'category', 'gradeLevel', 'sourceType', 'createdByUid', 'createdByName', 'adminId', 'schoolId', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['title', 'description', 'eventDateLabel', 'startTimeLabel', 'endTimeLabel', 'category', 'gradeLevel', 'subject', 'sourceType', 'sourceId', 'createdByUid', 'createdByName', 'adminId', 'schoolId', 'createdAt', 'updatedAt']) &&
+        isStr(data.title, 2, 150) &&
+        isOptStr(data, 'description', 1500) &&
+        isStr(data.eventDateLabel, 4, 40) &&
+        isStr(data.startTimeLabel, 3, 16) &&
+        isStr(data.endTimeLabel, 3, 16) &&
+        data.category in ['GENERAL', 'EXAM', 'ASSIGNMENT', 'HOLIDAY', 'MEETING'] &&
+        isStr(data.gradeLevel, 1, 40) &&
+        isOptStr(data, 'subject', 60) &&
+        data.sourceType in ['MANUAL', 'ASSIGNMENT', 'QUIZ'] &&
+        isOptStr(data, 'sourceId', 128) &&
+        isStr(data.createdByUid, 1, 128) &&
+        isStr(data.createdByName, 2, 100) &&
+        isStr(data.adminId, 1, 128) &&
+        data.schoolId == 'koofkeet_main' &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
     // --- COLLECTION RULES ---
 
     match /school_meta/{metaId} {
@@ -357,20 +383,29 @@ service cloud.firestore {
       allow list: if false;
       allow create: if isSignedIn() &&
         isValidId(uid) &&
-        request.auth.uid == uid &&
         isValidAdminDoc(incoming()) &&
         incoming().userId == uid &&
-        (isBootstrappedAdmin() || !isSchoolInitialized() || isAdmin());
-      allow update, delete: if false;
+        (
+          (request.auth.uid == uid && (isBootstrappedAdmin() || !isSchoolInitialized())) ||
+          (
+            request.auth.uid == uid &&
+            request.auth.token.email_verified == true &&
+            exists(/databases/$(database)/documents/role_grants/$(request.auth.token.email.lower())) &&
+            get(/databases/$(database)/documents/role_grants/$(request.auth.token.email.lower())).data.role == 'ADMIN'
+          ) ||
+          isAdmin()
+        );
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(uid) && existing().email != 'koofkeetschoolmanagement@gmail.com';
     }
 
     match /role_grants/{emailKey} {
-      allow get: if isSignedIn() && isValidId(emailKey) &&
+      allow get: if isSignedIn() && isValidEmailKey(emailKey) &&
         (isAdmin() || (request.auth.token.email_verified == true && existing().email == request.auth.token.email.lower()));
       allow list: if isSignedIn() &&
         (resource.data.adminId == request.auth.uid || isBootstrappedAdmin());
-      allow create: if isAdmin() && isValidId(emailKey) && isValidRoleGrant(incoming());
-      allow update: if isSignedIn() && isValidId(emailKey) && isValidRoleGrant(incoming()) &&
+      allow create: if isAdmin() && isValidEmailKey(emailKey) && isValidRoleGrant(incoming());
+      allow update: if isSignedIn() && isValidEmailKey(emailKey) && isValidRoleGrant(incoming()) &&
         incoming().createdAt == existing().createdAt &&
         (
           isAdmin() ||
@@ -382,14 +417,15 @@ service cloud.firestore {
             incoming().diff(existing()).affectedKeys().hasOnly(['claimedByUid', 'updatedAt'])
           )
         );
-      allow delete: if isAdmin() && isValidId(emailKey);
+      allow delete: if isAdmin() && isValidEmailKey(emailKey);
     }
 
     match /users/{userId} {
       allow get: if isSignedIn() && isValidId(userId) &&
         (request.auth.uid == userId || isAdmin() || isTeacher());
       allow list: if isSignedIn() &&
-        (resource.data.userId == request.auth.uid || resource.data.adminId == request.auth.uid || isBootstrappedAdmin());
+        (resource.data.userId == request.auth.uid || resource.data.adminId == request.auth.uid ||
+         (isTeacher() && resource.data.role == 'STUDENT') || isBootstrappedAdmin());
       allow create: if isSignedIn() &&
         isValidId(userId) &&
         request.auth.uid == userId &&
@@ -414,7 +450,7 @@ service cloud.firestore {
           (
             request.auth.uid == userId &&
             incoming().role == existing().role &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'gradeLevel', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'gradeLevel', 'preferredLanguage', 'updatedAt'])
           )
         );
       allow delete: if isAdmin() && isValidId(userId);
@@ -445,7 +481,7 @@ service cloud.firestore {
       allow list: if isSignedIn() &&
         (resource.data.studentUid == request.auth.uid || resource.data.parentUid == request.auth.uid ||
          resource.data.adminId == request.auth.uid || request.auth.uid in resource.data.teacherUids ||
-         isBootstrappedAdmin());
+         (isTeacher() && resource.data.status == 'ACTIVE') || isBootstrappedAdmin());
       allow create: if isAdmin() && isValidId(regId) && isValidStudentRegistration(incoming());
       allow update: if isAdmin() && isValidId(regId) && isValidStudentRegistration(incoming()) &&
         incoming().createdAt == existing().createdAt;
@@ -531,8 +567,10 @@ service cloud.firestore {
         isValidExamResult(incoming()) && incoming().teacherId == request.auth.uid;
       allow update: if (isTeacher() || isAdmin()) && isValidId(resultId) &&
         isValidExamResult(incoming()) && incoming().createdAt == existing().createdAt &&
+        incoming().studentId == existing().studentId &&
         (isAdmin() || existing().teacherId == request.auth.uid);
-      allow delete: if isAdmin() && isValidId(resultId);
+      allow delete: if isValidId(resultId) &&
+        (isAdmin() || (isTeacher() && existing().teacherId == request.auth.uid));
     }
 
     match /attendance/{attendanceId} {
@@ -547,8 +585,10 @@ service cloud.firestore {
         isValidAttendance(incoming()) && incoming().teacherId == request.auth.uid;
       allow update: if (isTeacher() || isAdmin()) && isValidId(attendanceId) &&
         isValidAttendance(incoming()) && incoming().createdAt == existing().createdAt &&
+        incoming().studentId == existing().studentId &&
         (isAdmin() || existing().teacherId == request.auth.uid);
-      allow delete: if isAdmin() && isValidId(attendanceId);
+      allow delete: if isValidId(attendanceId) &&
+        (isAdmin() || (isTeacher() && existing().teacherId == request.auth.uid));
     }
 
     match /learning_materials/{materialId} {
@@ -601,6 +641,18 @@ service cloud.firestore {
         isValidAnnouncement(incoming()) && incoming().createdAt == existing().createdAt &&
         (isAdmin() || existing().authorId == request.auth.uid);
       allow delete: if isAdmin() && isValidId(announcementId);
+    }
+
+    match /school_events/{eventId} {
+      allow get: if isSignedIn() && isValidId(eventId) && existing().schoolId == 'koofkeet_main';
+      allow list: if isSignedIn() && resource.data.schoolId == 'koofkeet_main';
+      allow create: if (isTeacher() || isAdmin()) && isValidId(eventId) &&
+        isValidCalendarEvent(incoming()) && incoming().createdByUid == request.auth.uid;
+      allow update: if (isTeacher() || isAdmin()) && isValidId(eventId) &&
+        isValidCalendarEvent(incoming()) && incoming().createdAt == existing().createdAt &&
+        (isAdmin() || existing().createdByUid == request.auth.uid);
+      allow delete: if isValidId(eventId) &&
+        (isAdmin() || (isTeacher() && existing().createdByUid == request.auth.uid));
     }
   }
 }

@@ -15,21 +15,27 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.FamilyRestroom
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.LockReset
+import androidx.compose.material.icons.filled.MarkEmailRead
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -41,10 +47,12 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,6 +65,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.R
@@ -68,9 +78,12 @@ import com.example.data.model.RoleGrant
 import com.example.data.model.SchoolMeta
 import com.example.data.model.UserRole
 import com.example.data.repository.GoogleSignInButton
+import com.example.data.repository.isValidResetEmail
+import com.example.data.repository.sendPasswordResetEmail
 import com.example.ui.components.KoofkeetFooterQuote
 import com.example.ui.components.LanguageSwitcherBar
 import com.example.ui.components.PrivacyIsolationNotice
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -81,7 +94,13 @@ fun AuthScreen(
     modifier: Modifier = Modifier
 ) {
     val strings = stringsFor(currentLanguage)
+    val scope = rememberCoroutineScope()
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var resetSuccessMessage by remember { mutableStateOf<String?>(null) }
+    var showForgotPasswordDialog by remember { mutableStateOf(false) }
+    var resetEmail by remember { mutableStateOf("") }
+    var resetDialogError by remember { mutableStateOf<String?>(null) }
+    var isSendingReset by remember { mutableStateOf(false) }
 
     Box(
         modifier = modifier
@@ -127,6 +146,7 @@ fun AuthScreen(
                     selectedLanguage = currentLanguage,
                     onLanguageSelected = { lang ->
                         errorMessage = null
+                        resetSuccessMessage = null
                         onLanguageSelected(lang)
                     }
                 )
@@ -267,9 +287,38 @@ fun AuthScreen(
                         }
                     }
 
+                    AnimatedVisibility(visible = !resetSuccessMessage.isNullOrBlank()) {
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("forgot_password_success_banner")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.MarkEmailRead,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = resetSuccessMessage.orEmpty(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+                    }
+
                     GoogleSignInButton(
                         onAuthSuccess = {
                             errorMessage = null
+                            resetSuccessMessage = null
                             onAuthSuccess()
                         },
                         onAuthError = { msg -> errorMessage = msg },
@@ -277,6 +326,28 @@ fun AuthScreen(
                         loadingText = strings.signingIn,
                         onAuthCancelled = { errorMessage = strings.signInCancelledHint }
                     )
+
+                    TextButton(
+                        onClick = {
+                            resetDialogError = null
+                            showForgotPasswordDialog = true
+                        },
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .heightIn(min = 48.dp)
+                            .testTag("forgot_password_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.LockReset,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = strings.forgotPasswordButton,
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
 
                     Text(
                         text = strings.signInNote,
@@ -290,6 +361,151 @@ fun AuthScreen(
 
             KoofkeetFooterQuote(quoteText = strings.footerQuote)
         }
+    }
+
+    if (showForgotPasswordDialog) {
+        val submitReset: () -> Unit = {
+            val trimmed = resetEmail.trim()
+            if (!isValidResetEmail(trimmed)) {
+                resetDialogError = strings.invalidEmailError
+            } else {
+                resetDialogError = null
+                isSendingReset = true
+                scope.launch {
+                    val result = sendPasswordResetEmail(
+                        email = trimmed,
+                        languageCode = currentLanguage.code
+                    )
+                    isSendingReset = false
+                    result.fold(
+                        onSuccess = {
+                            resetSuccessMessage = strings.resetEmailSentSuccess.format(trimmed)
+                            showForgotPasswordDialog = false
+                            resetEmail = ""
+                            resetDialogError = null
+                        },
+                        onFailure = { err ->
+                            resetDialogError = strings.resetEmailFailedPrefix +
+                                (err.localizedMessage ?: strings.invalidEmailError)
+                        }
+                    )
+                }
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = {
+                if (!isSendingReset) {
+                    showForgotPasswordDialog = false
+                    resetDialogError = null
+                }
+            },
+            icon = {
+                Icon(
+                    imageVector = Icons.Filled.LockReset,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            },
+            title = {
+                Text(
+                    text = strings.forgotPasswordTitle,
+                    modifier = Modifier.testTag("forgot_password_dialog")
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = strings.forgotPasswordDescription,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = resetEmail,
+                        onValueChange = {
+                            resetEmail = it
+                            if (resetDialogError != null) resetDialogError = null
+                        },
+                        label = { Text(strings.emailLabel) },
+                        singleLine = true,
+                        enabled = !isSendingReset,
+                        isError = !resetDialogError.isNullOrBlank(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Email,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                if (!isSendingReset && resetEmail.isNotBlank()) submitReset()
+                            }
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("forgot_password_email_input")
+                    )
+                    AnimatedVisibility(visible = !resetDialogError.isNullOrBlank()) {
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.ErrorOutline,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = resetDialogError.orEmpty(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = submitReset,
+                    enabled = !isSendingReset && resetEmail.isNotBlank(),
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .testTag("forgot_password_send_button")
+                ) {
+                    if (isSendingReset) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(strings.sendingResetLink)
+                    } else {
+                        Text(strings.sendResetLinkButton)
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showForgotPasswordDialog = false
+                        resetDialogError = null
+                    },
+                    enabled = !isSendingReset,
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .testTag("forgot_password_cancel_button")
+                ) {
+                    Text(strings.cancelLabel)
+                }
+            }
+        )
     }
 }
 
@@ -320,13 +536,13 @@ private fun RoleFeaturePill(icon: ImageVector, label: String) {
 }
 
 @Composable
-fun OnboardingScreen(
+fun ProfileSetupScreen(
     email: String,
     defaultName: String,
     schoolMeta: SchoolMeta?,
     pendingGrant: RoleGrant?,
     isBusy: Boolean,
-    onComplete: (displayName: String, gradeLevel: String, claimAdmin: Boolean) -> Unit,
+    onComplete: (displayName: String, gradeLevel: String, preferredLanguage: AppLanguage, claimAdmin: Boolean) -> Unit,
     onSignOut: () -> Unit,
     onLanguageSelected: (AppLanguage) -> Unit = {},
     modifier: Modifier = Modifier
@@ -336,18 +552,28 @@ fun OnboardingScreen(
 
     val isBootstrapAdmin = email.equals(BOOTSTRAP_ADMIN_EMAIL, ignoreCase = true)
     val canClaimFirstAdmin = schoolMeta == null && !isBootstrapAdmin && pendingGrant == null
-    var fullName by remember(defaultName) { mutableStateOf(defaultName.ifBlank { "Fayyadamaa Koofkeet" }) }
-    var gradeLevel by remember { mutableStateOf(pendingGrant?.gradeLevel?.ifBlank { "Kutaa 10" } ?: "Kutaa 10") }
+    var fullName by remember(defaultName) { mutableStateOf(defaultName.trim()) }
+    var gradeLevel by remember { mutableStateOf(pendingGrant?.gradeLevel.orEmpty()) }
     var claimAdmin by remember(isBootstrapAdmin, schoolMeta) {
         mutableStateOf(isBootstrapAdmin || schoolMeta == null)
     }
 
     val grades = listOf("Kutaa 9", "Kutaa 10", "Kutaa 11", "Kutaa 12")
+    val needsGradeSelection = !isBootstrapAdmin && !(canClaimFirstAdmin && claimAdmin) &&
+        (pendingGrant == null || pendingGrant.role == UserRole.STUDENT.name)
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.background,
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)
+                    )
+                )
+            )
+            .testTag("profile_setup_screen"),
         contentAlignment = Alignment.TopCenter
     ) {
         Column(
@@ -355,36 +581,77 @@ fun OnboardingScreen(
                 .widthIn(max = 560.dp)
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(20.dp),
+                .padding(20.dp)
+                .animateContentSize(animationSpec = spring()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            LanguageSwitcherBar(
-                selectedLanguage = currentLanguage,
-                onLanguageSelected = onLanguageSelected
-            )
-
-            Text(
-                text = strings.onboardingWelcome,
-                style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Text(
-                text = strings.onboardingSubtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.VerifiedUser,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .padding(10.dp)
+                            .size(24.dp)
+                    )
+                }
+                Column {
+                    Text(
+                        text = strings.onboardingWelcome,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = strings.onboardingSubtitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
 
             Card(
                 shape = MaterialTheme.shapes.large,
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
                 Column(
                     modifier = Modifier.padding(18.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Language,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = strings.languageSelectorLabel,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    LanguageSwitcherBar(
+                        selectedLanguage = currentLanguage,
+                        onLanguageSelected = onLanguageSelected
+                    )
+
                     Surface(
                         shape = MaterialTheme.shapes.small,
-                        color = MaterialTheme.colorScheme.primaryContainer
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
                     ) {
                         Row(
                             modifier = Modifier
@@ -393,7 +660,7 @@ fun OnboardingScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                imageVector = Icons.Filled.VerifiedUser,
+                                imageVector = Icons.Filled.Security,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary
                             )
@@ -426,7 +693,7 @@ fun OnboardingScreen(
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("onboarding_name_input")
+                            .testTag("profile_setup_name_input")
                     )
 
                     if (canClaimFirstAdmin) {
@@ -454,9 +721,7 @@ fun OnboardingScreen(
                         }
                     }
 
-                    if (!isBootstrapAdmin && !(canClaimFirstAdmin && claimAdmin) &&
-                        (pendingGrant == null || pendingGrant.role == UserRole.STUDENT.name)
-                    ) {
+                    if (needsGradeSelection) {
                         Text(
                             text = strings.gradeLevelLabel,
                             style = MaterialTheme.typography.titleSmall
@@ -476,12 +741,12 @@ fun OnboardingScreen(
                     }
 
                     Button(
-                        onClick = { onComplete(fullName, gradeLevel, claimAdmin) },
-                        enabled = !isBusy && fullName.trim().length >= 2,
+                        onClick = { onComplete(fullName, gradeLevel, currentLanguage, claimAdmin) },
+                        enabled = !isBusy && fullName.trim().length >= 2 && (!needsGradeSelection || gradeLevel.isNotBlank()),
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(50.dp)
-                            .testTag("complete_onboarding_button")
+                            .testTag("profile_setup_save_button")
                     ) {
                         if (isBusy) {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)

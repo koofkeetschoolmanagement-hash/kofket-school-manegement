@@ -7,15 +7,21 @@ import com.example.core.handleFirestoreError
 import com.example.data.model.AiChatMessage
 import com.example.data.model.Announcement
 import com.example.data.model.AnnouncementCategory
+import com.example.data.model.Assignment
 import com.example.data.model.AttendanceRecord
 import com.example.data.model.AttendanceStatus
+import com.example.data.model.AttendanceSyncStatus
 import com.example.data.model.BOOTSTRAP_ADMIN_EMAIL
+import com.example.data.model.CalendarEventCategory
 import com.example.data.model.EarlyWarning
 import com.example.data.model.ExamResult
 import com.example.data.model.LearningMaterial
 import com.example.data.model.MaterialType
 import com.example.data.model.ParentMessage
+import com.example.data.model.Quiz
 import com.example.data.model.SCHOOL_ID_MAIN
+import com.example.data.model.SchoolCalendarEvent
+import com.example.data.model.SyncPhase
 import com.example.data.model.UserProfile
 import com.example.data.model.UserRole
 import com.example.data.model.serverTime
@@ -25,6 +31,9 @@ import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
+import com.google.firebase.firestore.MetadataChanges
+import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -32,6 +41,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 
 class CommunicationAndRecordsRepository(
     private val db: FirebaseFirestore,
@@ -98,23 +108,34 @@ class CommunicationAndRecordsRepository(
     ): Result<Boolean> = try {
         val uid = requireUserId()
         val clampedScore = score.coerceIn(0.0, 100.0)
+        val cleanStudentName = studentName.trim().take(100)
+        val cleanGrade = gradeLevel.trim().take(40).ifBlank { "Grade 1" }
+        val cleanSubject = subject.trim().take(60)
+        val cleanExam = examName.trim().take(100).ifBlank { "Assessment" }
+        val cleanMonth = monthLabel.trim().take(40).ifBlank { "2026-11" }
+        require(cleanStudentName.length >= 2) { "Student name must be at least 2 characters" }
+        require(cleanSubject.length >= 2) { "Subject must be at least 2 characters" }
+
+        val resolvedStudentId = studentId.trim().take(128).ifBlank {
+            "manual_${cleanStudentName.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_').ifBlank { "student" }}"
+        }
         val resultRef = db.collection("exam_results").document()
         val batch = db.batch()
 
         val resultPayload = mapOf(
-            "studentId" to studentId,
-            "studentName" to studentName.trim(),
-            "parentId" to parentId.trim().ifBlank { null },
+            "studentId" to resolvedStudentId,
+            "studentName" to cleanStudentName,
+            "parentId" to parentId.trim().take(128).ifBlank { null },
             "teacherId" to uid,
-            "teacherName" to teacherName.trim(),
-            "adminId" to adminId.ifBlank { uid },
-            "subject" to subject.trim(),
-            "gradeLevel" to gradeLevel.trim(),
-            "examName" to examName.trim(),
-            "monthLabel" to monthLabel.trim(),
+            "teacherName" to teacherName.trim().take(100).ifBlank { "Teacher" },
+            "adminId" to adminId.ifBlank { uid }.take(128),
+            "subject" to cleanSubject,
+            "gradeLevel" to cleanGrade,
+            "examName" to cleanExam,
+            "monthLabel" to cleanMonth,
             "score" to clampedScore,
             "maxScore" to 100.0,
-            "remarks" to remarks.trim().ifBlank { null },
+            "remarks" to remarks.trim().take(500).ifBlank { null },
             "createdAt" to serverTime(),
             "updatedAt" to serverTime()
         ).filterValues { it != null } as Map<String, Any>
@@ -129,23 +150,23 @@ class CommunicationAndRecordsRepository(
         if (triggeredWarning) {
             val warningRef = db.collection("early_warnings").document()
             val reason = if (priorScores.isNotEmpty() && dropAmount >= 15.0) {
-                "Gahumsi barataa $subject irratti ${"%.1f".format(prevAvg)}% irraa gara ${"%.1f".format(clampedScore)}% gadi bu'eera (Deeggarsa dabalataa barbaachisa)."
+                "Gahumsi barataa $cleanSubject irratti ${"%.1f".format(prevAvg)}% irraa gara ${"%.1f".format(clampedScore)}% gadi bu'eera (Deeggarsa dabalataa barbaachisa)."
             } else {
-                "Qabxiin $subject (${"%.1f".format(clampedScore)}%) sadarkaa gadi aanaa irra jira; deeggarsi dabalataa barbaachisa."
+                "Qabxiin $cleanSubject (${"%.1f".format(clampedScore)}%) sadarkaa gadi aanaa irra jira; deeggarsi dabalataa barbaachisa."
             }
             batch.set(
                 warningRef,
                 mapOf(
-                    "studentId" to studentId,
-                    "studentName" to studentName.trim(),
-                    "gradeLevel" to gradeLevel.trim(),
-                    "subject" to subject.trim(),
+                    "studentId" to resolvedStudentId,
+                    "studentName" to cleanStudentName,
+                    "gradeLevel" to cleanGrade,
+                    "subject" to cleanSubject,
                     "previousAverage" to prevAvg,
                     "currentScore" to clampedScore,
                     "dropAmount" to dropAmount,
-                    "reason" to reason,
+                    "reason" to reason.take(500),
                     "teacherId" to uid,
-                    "adminId" to adminId.ifBlank { uid },
+                    "adminId" to adminId.ifBlank { uid }.take(128),
                     "status" to "OPEN",
                     "createdAt" to serverTime(),
                     "updatedAt" to serverTime()
@@ -162,21 +183,99 @@ class CommunicationAndRecordsRepository(
         Result.failure(e)
     }
 
+    suspend fun updateExamResult(
+        resultId: String,
+        score: Double,
+        remarks: String
+    ): Result<Unit> = try {
+        requireUserId()
+        require(resultId.isNotBlank()) { "Result ID is required" }
+        val updates = buildMap<String, Any> {
+            put("score", score.coerceIn(0.0, 100.0))
+            put("remarks", remarks.trim().take(500))
+            put("updatedAt", serverTime())
+        }
+        db.collection("exam_results").document(resultId).update(updates).await()
+        Result.success(Unit)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.UPDATE, "exam_results/$resultId")
+        Result.failure(e)
+    }
+
+    suspend fun deleteExamResult(resultId: String): Result<Unit> = try {
+        requireUserId()
+        require(resultId.isNotBlank()) { "Result ID is required" }
+        db.collection("exam_results").document(resultId).delete().await()
+        Result.success(Unit)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.DELETE, "exam_results/$resultId")
+        Result.failure(e)
+    }
+
+    private fun buildAttendanceQuery(profile: UserProfile, uid: String): Query = when (profile.userRole) {
+        UserRole.ADMIN -> if (profile.email.equals(BOOTSTRAP_ADMIN_EMAIL, ignoreCase = true)) {
+            db.collection("attendance")
+        } else {
+            db.collection("attendance").whereEqualTo("adminId", uid)
+        }
+        UserRole.TEACHER -> db.collection("attendance").whereEqualTo("teacherId", uid)
+        UserRole.PARENT -> db.collection("attendance").whereEqualTo("parentId", uid)
+        UserRole.STUDENT -> db.collection("attendance").whereEqualTo("studentId", uid)
+    }
+
     fun observeAttendance(profile: UserProfile): Flow<List<AttendanceRecord>> {
         val uid = auth.currentUser?.uid ?: return emptyFlow()
-        val query = when (profile.userRole) {
-            UserRole.ADMIN -> if (profile.email.equals(BOOTSTRAP_ADMIN_EMAIL, ignoreCase = true)) {
-                db.collection("attendance")
-            } else {
-                db.collection("attendance").whereEqualTo("adminId", uid)
-            }
-            UserRole.TEACHER -> db.collection("attendance").whereEqualTo("teacherId", uid)
-            UserRole.PARENT -> db.collection("attendance").whereEqualTo("parentId", uid)
-            UserRole.STUDENT -> db.collection("attendance").whereEqualTo("studentId", uid)
-        }
-        return query.snapshots()
+        return buildAttendanceQuery(profile, uid)
+            .snapshots()
             .map { snap -> snap.toObjects(AttendanceRecord::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE) }
             .handleStreamErrors(OperationType.LIST, "attendance", uid)
+    }
+
+    fun observeAttendanceSyncStatus(profile: UserProfile): Flow<AttendanceSyncStatus> {
+        val uid = auth.currentUser?.uid ?: return emptyFlow()
+        return buildAttendanceQuery(profile, uid)
+            .snapshots(MetadataChanges.INCLUDE)
+            .map { snap ->
+                val pendingCount = snap.documents.count { it.metadata.hasPendingWrites() }
+                val hasPending = snap.metadata.hasPendingWrites() || pendingCount > 0
+                val fromCache = snap.metadata.isFromCache
+                AttendanceSyncStatus(
+                    phase = if (hasPending) SyncPhase.OFFLINE_PENDING else SyncPhase.SYNCED,
+                    pendingWriteCount = pendingCount,
+                    isFromCache = fromCache,
+                    totalRecords = snap.size(),
+                    lastSyncedMillis = if (!hasPending && !fromCache) System.currentTimeMillis() else 0L
+                )
+            }
+            .catch { /* Keep last status if metadata stream errors */ }
+    }
+
+    suspend fun syncAttendanceWithServer(profile: UserProfile): Result<Int> = try {
+        val uid = requireUserId()
+        val flushed = withTimeoutOrNull(7_000L) {
+            db.waitForPendingWrites().await()
+            true
+        } ?: false
+        val serverSnap = withTimeoutOrNull(7_000L) {
+            buildAttendanceQuery(profile, uid).get(Source.SERVER).await()
+        }
+        if (flushed && serverSnap != null) {
+            Result.success(serverSnap.size())
+        } else {
+            val cacheSnap = buildAttendanceQuery(profile, uid).get(Source.CACHE).await()
+            Result.failure(
+                IllegalStateException("Offline queue active (${cacheSnap.size()} cached records). Will sync when online.")
+            )
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.LIST, "attendance/sync")
+        Result.failure(e)
     }
 
     suspend fun recordAttendance(
@@ -190,26 +289,133 @@ class CommunicationAndRecordsRepository(
         note: String
     ): Result<Unit> = try {
         val uid = requireUserId()
-        val ref = db.collection("attendance").document()
-        val payload = buildMap<String, Any> {
-            put("studentId", studentId)
-            put("studentName", studentName.trim())
-            parentId.trim().takeIf { it.isNotEmpty() }?.let { put("parentId", it) }
-            put("teacherId", uid)
-            put("adminId", adminId.ifBlank { uid })
-            put("gradeLevel", gradeLevel.trim())
-            put("dateLabel", dateLabel.trim())
-            put("status", status.name)
-            note.trim().takeIf { it.isNotEmpty() }?.let { put("note", it) }
-            put("createdAt", serverTime())
-            put("updatedAt", serverTime())
+        val cleanName = studentName.trim().take(100)
+        val cleanGrade = gradeLevel.trim().take(40)
+        val cleanDate = dateLabel.trim().take(40)
+        val cleanNote = note.trim().take(300)
+        val cleanParent = parentId.trim().take(128)
+        require(cleanName.length >= 2) { "Student name must be at least 2 characters" }
+        require(cleanGrade.isNotEmpty()) { "Grade level is required" }
+        require(cleanDate.length >= 4) { "Date is required" }
+
+        val resolvedStudentId = studentId.trim().take(128).ifBlank {
+            "manual_${cleanName.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_').ifBlank { "student" }}"
         }
-        ref.set(payload).await()
+        val docId = buildDailyAttendanceDocId(cleanDate, resolvedStudentId, uid)
+        val ref = db.collection("attendance").document(docId)
+        val existingSnap = ref.get().await()
+
+        if (existingSnap.exists()) {
+            val updates = buildMap<String, Any> {
+                put("studentName", cleanName)
+                put("gradeLevel", cleanGrade)
+                put("dateLabel", cleanDate)
+                put("status", status.name)
+                put("note", cleanNote)
+                if (cleanParent.isNotEmpty()) put("parentId", cleanParent)
+                put("updatedAt", serverTime())
+            }
+            ref.update(updates).await()
+        } else {
+            val payload = buildMap<String, Any> {
+                put("studentId", resolvedStudentId)
+                put("studentName", cleanName)
+                if (cleanParent.isNotEmpty()) put("parentId", cleanParent)
+                put("teacherId", uid)
+                put("adminId", adminId.ifBlank { uid }.take(128))
+                put("gradeLevel", cleanGrade)
+                put("dateLabel", cleanDate)
+                put("status", status.name)
+                if (cleanNote.isNotEmpty()) put("note", cleanNote)
+                put("createdAt", serverTime())
+                put("updatedAt", serverTime())
+            }
+            ref.set(payload).await()
+        }
         Result.success(Unit)
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
-        handleFirestoreError(e, OperationType.CREATE, "attendance")
+        handleFirestoreError(e, OperationType.WRITE, "attendance")
+        Result.failure(e)
+    }
+
+    suspend fun markBatchAttendance(
+        entries: List<DailyAttendanceEntry>,
+        dateLabel: String,
+        adminId: String
+    ): Result<Int> = try {
+        val uid = requireUserId()
+        val cleanDate = dateLabel.trim().take(40)
+        require(cleanDate.length >= 4) { "Date is required" }
+        if (entries.isEmpty()) return Result.success(0)
+
+        var processed = 0
+        entries.chunked(200).forEach { chunk ->
+            val refsAndEntries = chunk.map { entry ->
+                val resolvedStudentId = entry.studentId.trim().take(128).ifBlank {
+                    "manual_${entry.studentName.trim().lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_').ifBlank { "student" }}"
+                }
+                val docId = buildDailyAttendanceDocId(cleanDate, resolvedStudentId, uid)
+                Triple(db.collection("attendance").document(docId), resolvedStudentId, entry)
+            }
+            val batch = db.batch()
+            refsAndEntries.forEach { (ref, resolvedStudentId, entry) ->
+                val cleanName = entry.studentName.trim().take(100)
+                val cleanGrade = entry.gradeLevel.trim().take(40).ifBlank { "Hunda" }
+                val cleanNote = entry.note.trim().take(300)
+                val cleanParent = entry.parentId.trim().take(128)
+                if (cleanName.length >= 2) {
+                    val exists = ref.get().await().exists()
+                    if (exists) {
+                        val updates = buildMap<String, Any> {
+                            put("studentName", cleanName)
+                            put("gradeLevel", cleanGrade)
+                            put("dateLabel", cleanDate)
+                            put("status", entry.status.name)
+                            put("note", cleanNote)
+                            if (cleanParent.isNotEmpty()) put("parentId", cleanParent)
+                            put("updatedAt", serverTime())
+                        }
+                        batch.update(ref, updates)
+                    } else {
+                        val payload = buildMap<String, Any> {
+                            put("studentId", resolvedStudentId)
+                            put("studentName", cleanName)
+                            if (cleanParent.isNotEmpty()) put("parentId", cleanParent)
+                            put("teacherId", uid)
+                            put("adminId", adminId.ifBlank { uid }.take(128))
+                            put("gradeLevel", cleanGrade)
+                            put("dateLabel", cleanDate)
+                            put("status", entry.status.name)
+                            if (cleanNote.isNotEmpty()) put("note", cleanNote)
+                            put("createdAt", serverTime())
+                            put("updatedAt", serverTime())
+                        }
+                        batch.set(ref, payload)
+                    }
+                    processed++
+                }
+            }
+            batch.commit().await()
+        }
+        Result.success(processed)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.WRITE, "attendance")
+        Result.failure(e)
+    }
+
+    suspend fun deleteAttendanceRecord(attendanceId: String): Result<Unit> = try {
+        requireUserId()
+        require(attendanceId.isNotBlank()) { "Attendance ID is required" }
+        db.collection("attendance").document(attendanceId).delete().await()
+        Result.success(Unit)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.DELETE, "attendance/$attendanceId")
         Result.failure(e)
     }
 
@@ -412,4 +618,241 @@ class CommunicationAndRecordsRepository(
         handleFirestoreError(e, OperationType.CREATE, "users/ai_chats")
         Result.failure(e)
     }
+
+    suspend fun deleteAiChat(chatId: String): Result<Unit> = try {
+        val uid = requireUserId()
+        db.collection("users").document(uid).collection("ai_chats").document(chatId).delete().await()
+        Result.success(Unit)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.DELETE, "users/$chatId")
+        Result.failure(e)
+    }
+
+    suspend fun clearAllAiChats(): Result<Unit> = try {
+        val uid = requireUserId()
+        val snap = db.collection("users").document(uid).collection("ai_chats").get().await()
+        val docs = snap.documents
+        docs.chunked(400).forEach { chunk ->
+            val batch = db.batch()
+            chunk.forEach { doc -> batch.delete(doc.reference) }
+            batch.commit().await()
+        }
+        Result.success(Unit)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.DELETE, "users/ai_chats")
+        Result.failure(e)
+    }
+
+    fun observeCalendarEvents(): Flow<List<SchoolCalendarEvent>> {
+        val uid = auth.currentUser?.uid ?: return emptyFlow()
+        return db.collection("school_events")
+            .whereEqualTo("schoolId", SCHOOL_ID_MAIN)
+            .snapshots()
+            .map { snap -> snap.toObjects(SchoolCalendarEvent::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE) }
+            .handleStreamErrors(OperationType.LIST, "school_events", uid)
+    }
+
+    suspend fun upsertCalendarEvent(
+        eventId: String = "",
+        title: String,
+        description: String,
+        eventDateLabel: String,
+        startTimeLabel: String,
+        endTimeLabel: String,
+        category: CalendarEventCategory,
+        gradeLevel: String,
+        subject: String,
+        creatorName: String,
+        adminId: String,
+        sourceType: String = "MANUAL",
+        sourceId: String = ""
+    ): Result<Unit> = try {
+        val uid = requireUserId()
+        val cleanTitle = title.trim().take(150)
+        val cleanDate = eventDateLabel.trim().take(40)
+        val cleanGrade = gradeLevel.trim().take(40).ifBlank { "Hunda" }
+        val cleanStart = startTimeLabel.trim().take(16).ifBlank { "08:30" }
+        val cleanEnd = endTimeLabel.trim().take(16).ifBlank { "09:30" }
+        require(cleanTitle.length >= 2) { "Event title must be at least 2 characters" }
+        require(cleanDate.length >= 4) { "Event date is required" }
+
+        val ref = if (eventId.isNotBlank()) {
+            db.collection("school_events").document(eventId)
+        } else {
+            db.collection("school_events").document()
+        }
+        val exists = eventId.isNotBlank() && ref.get().await().exists()
+        if (exists) {
+            val updates = buildMap<String, Any> {
+                put("title", cleanTitle)
+                put("description", description.trim().take(1500))
+                put("eventDateLabel", cleanDate)
+                put("startTimeLabel", cleanStart)
+                put("endTimeLabel", cleanEnd)
+                put("category", category.name)
+                put("gradeLevel", cleanGrade)
+                put("subject", subject.trim().take(60))
+                put("updatedAt", serverTime())
+            }
+            ref.update(updates).await()
+        } else {
+            val payload = buildMap<String, Any> {
+                put("title", cleanTitle)
+                description.trim().take(1500).takeIf { it.isNotEmpty() }?.let { put("description", it) }
+                put("eventDateLabel", cleanDate)
+                put("startTimeLabel", cleanStart)
+                put("endTimeLabel", cleanEnd)
+                put("category", category.name)
+                put("gradeLevel", cleanGrade)
+                subject.trim().take(60).takeIf { it.isNotEmpty() }?.let { put("subject", it) }
+                put("sourceType", sourceType)
+                sourceId.trim().take(128).takeIf { it.isNotEmpty() }?.let { put("sourceId", it) }
+                put("createdByUid", uid)
+                put("createdByName", creatorName.trim().take(100).ifBlank { "Koofkeet Staff" })
+                put("adminId", adminId.ifBlank { uid }.take(128))
+                put("schoolId", SCHOOL_ID_MAIN)
+                put("createdAt", serverTime())
+                put("updatedAt", serverTime())
+            }
+            ref.set(payload).await()
+        }
+        Result.success(Unit)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.WRITE, "school_events")
+        Result.failure(e)
+    }
+
+    suspend fun deleteCalendarEvent(eventId: String): Result<Unit> = try {
+        requireUserId()
+        require(eventId.isNotBlank()) { "Event ID is required" }
+        db.collection("school_events").document(eventId).delete().await()
+        Result.success(Unit)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.DELETE, "school_events/$eventId")
+        Result.failure(e)
+    }
+
+    suspend fun syncAcademicsToCalendar(
+        assignments: List<Assignment>,
+        quizzes: List<Quiz>,
+        creatorName: String,
+        adminId: String,
+        fallbackDate: String
+    ): Result<Int> = try {
+        val uid = requireUserId()
+        var synced = 0
+        val targets = buildList {
+            assignments.forEach { hw ->
+                val docId = "assign_${hw.id.replace(Regex("[^a-zA-Z0-9_.-]+"), "_").take(100)}"
+                add(
+                    Triple(
+                        docId,
+                        CalendarEventCategory.ASSIGNMENT,
+                        mapOf(
+                            "title" to "${hw.subject}: ${hw.title}".take(150),
+                            "description" to hw.description.take(1500),
+                            "eventDateLabel" to hw.dueDateLabel.ifBlank { fallbackDate }.take(40),
+                            "startTimeLabel" to "08:30",
+                            "endTimeLabel" to "09:30",
+                            "category" to CalendarEventCategory.ASSIGNMENT.name,
+                            "gradeLevel" to hw.gradeLevel.ifBlank { "Hunda" }.take(40),
+                            "subject" to hw.subject.take(60),
+                            "sourceType" to "ASSIGNMENT",
+                            "sourceId" to hw.id.take(128)
+                        )
+                    )
+                )
+            }
+            quizzes.forEach { q ->
+                val docId = "quiz_${q.id.replace(Regex("[^a-zA-Z0-9_.-]+"), "_").take(100)}"
+                add(
+                    Triple(
+                        docId,
+                        CalendarEventCategory.EXAM,
+                        mapOf(
+                            "title" to "Quiz: ${q.title}".take(150),
+                            "description" to "${q.subject} • ${q.durationMinutes} min",
+                            "eventDateLabel" to fallbackDate.take(40),
+                            "startTimeLabel" to "10:00",
+                            "endTimeLabel" to "11:00",
+                            "category" to CalendarEventCategory.EXAM.name,
+                            "gradeLevel" to q.gradeLevel.ifBlank { "Hunda" }.take(40),
+                            "subject" to q.subject.take(60),
+                            "sourceType" to "QUIZ",
+                            "sourceId" to q.id.take(128)
+                        )
+                    )
+                )
+            }
+        }
+        if (targets.isEmpty()) return Result.success(0)
+
+        targets.chunked(200).forEach { chunk ->
+            val batch = db.batch()
+            chunk.forEach { (docId, _, fields) ->
+                val ref = db.collection("school_events").document(docId)
+                val existing = ref.get().await()
+                if (existing.exists()) {
+                    val updates = fields.toMutableMap<String, Any>().apply {
+                        put("updatedAt", serverTime())
+                    }
+                    batch.update(ref, updates)
+                } else {
+                    val payload = fields.toMutableMap<String, Any>().apply {
+                        put("createdByUid", uid)
+                        put("createdByName", creatorName.trim().take(100).ifBlank { "Koofkeet Staff" })
+                        put("adminId", adminId.ifBlank { uid }.take(128))
+                        put("schoolId", SCHOOL_ID_MAIN)
+                        put("createdAt", serverTime())
+                        put("updatedAt", serverTime())
+                    }
+                    batch.set(ref, payload)
+                }
+                synced++
+            }
+            batch.commit().await()
+        }
+        Result.success(synced)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.WRITE, "school_events/sync")
+        Result.failure(e)
+    }
 }
+
+data class DailyAttendanceEntry(
+    val studentId: String,
+    val studentName: String,
+    val parentId: String = "",
+    val gradeLevel: String,
+    val status: AttendanceStatus,
+    val note: String = ""
+)
+
+fun buildDailyAttendanceDocId(
+    dateLabel: String,
+    studentId: String,
+    teacherUid: String
+): String {
+    val sanitize: (String, Int) -> String = { raw, maxLen ->
+        raw.trim()
+            .replace(Regex("[^a-zA-Z0-9_.-]+"), "_")
+            .trim('_')
+            .take(maxLen)
+            .ifBlank { "x" }
+    }
+    val datePart = sanitize(dateLabel, 24)
+    val studentPart = sanitize(studentId, 56)
+    val teacherPart = sanitize(teacherUid, 28)
+    return "${datePart}_${studentPart}_${teacherPart}".take(120)
+}
+

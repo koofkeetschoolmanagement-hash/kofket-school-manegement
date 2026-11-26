@@ -401,3 +401,466 @@ test("Assignments, submissions, quizzes, materials, announcements, and shadow-up
     })
   );
 });
+
+test("User Role Management: Admin manages Admin/Teacher/Student roles and grants; non-admins blocked", async () => {
+  await seedRoles();
+  const past = new Date(Date.now() - 4000);
+  const adminDb = testEnv.authenticatedContext(ADMIN_UID, {
+    email: "koofkeetschoolmanagement@gmail.com",
+    email_verified: true,
+  }).firestore();
+  const teacherDb = testEnv.authenticatedContext(TEACHER_UID, {
+    email: "teacher@koofkeet.org",
+    email_verified: true,
+  }).firestore();
+  const studentDb = testEnv.authenticatedContext(STUDENT_A_UID, {
+    email: "chaltu@koofkeet.org",
+    email_verified: true,
+  }).firestore();
+
+  // Admin can list users and issue a TEACHER role_grant
+  await assertSucceeds(adminDb.collection("users").get());
+  await assertSucceeds(
+    adminDb.collection("role_grants").doc("newteacher@koofkeet.org").set({
+      email: "newteacher@koofkeet.org",
+      role: "TEACHER",
+      fullName: "Barsiisaa Haaraa",
+      subject: "Fiiziksii",
+      gradeLevel: "Kutaa 11",
+      adminId: ADMIN_UID,
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+  await assertSucceeds(adminDb.collection("role_grants").get());
+
+  // Teacher and Student CANNOT list all users or issue/delete role_grants
+  await assertFails(teacherDb.collection("users").get());
+  await assertFails(studentDb.collection("users").get());
+  await assertFails(
+    teacherDb.collection("role_grants").doc("fake@koofkeet.org").set({
+      email: "fake@koofkeet.org",
+      role: "ADMIN",
+      fullName: "Fake",
+      adminId: ADMIN_UID,
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+
+  // Verified granted user can onboard with TEACHER role, but NOT ADMIN
+  const newTeacherDb = testEnv.authenticatedContext("new_teacher_uid", {
+    email: "newteacher@koofkeet.org",
+    email_verified: true,
+  }).firestore();
+  await assertFails(
+    newTeacherDb.collection("users").doc("new_teacher_uid").set({
+      userId: "new_teacher_uid",
+      displayName: "Barsiisaa Haaraa",
+      email: "newteacher@koofkeet.org",
+      role: "ADMIN",
+      adminId: ADMIN_UID,
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+  await assertSucceeds(
+    newTeacherDb.collection("users").doc("new_teacher_uid").set({
+      userId: "new_teacher_uid",
+      displayName: "Barsiisaa Haaraa",
+      email: "newteacher@koofkeet.org",
+      role: "TEACHER",
+      subject: "Fiiziksii",
+      gradeLevel: "Kutaa 11",
+      adminId: ADMIN_UID,
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+
+  // Admin can promote Student B to ADMIN (users + admins) and demote back to STUDENT
+  await assertSucceeds(
+    adminDb.collection("users").doc(STUDENT_B_UID).update({
+      role: "ADMIN",
+      updatedAt: new Date(Date.now() - 1000),
+    })
+  );
+  await assertSucceeds(
+    adminDb.collection("admins").doc(STUDENT_B_UID).set({
+      userId: STUDENT_B_UID,
+      email: "bikila@koofkeet.org",
+      createdAt: past,
+    })
+  );
+  await assertSucceeds(
+    adminDb.collection("users").doc(STUDENT_B_UID).update({
+      role: "STUDENT",
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+  await assertSucceeds(adminDb.collection("admins").doc(STUDENT_B_UID).delete());
+
+  // Bootstrap admin doc cannot be deleted
+  await assertFails(adminDb.collection("admins").doc(ADMIN_UID).delete());
+
+  // Admin can revoke role_grant
+  await assertSucceeds(adminDb.collection("role_grants").doc("newteacher@koofkeet.org").delete());
+});
+
+test("Profile Setup preferredLanguage supports om/en/am on create & owner update and rejects invalid codes", async () => {
+  await seedRoles();
+  const past = new Date(Date.now() - 3000);
+  const setupUid = "profile_setup_user";
+  const setupDb = testEnv.authenticatedContext(setupUid, {
+    email: "setup_user@koofkeet.org",
+    email_verified: true,
+  }).firestore();
+
+  // Reject invalid preferredLanguage on create
+  await assertFails(
+    setupDb.collection("users").doc(setupUid).set({
+      userId: setupUid,
+      displayName: "Dabalaa",
+      email: "setup_user@koofkeet.org",
+      role: "STUDENT",
+      gradeLevel: "Kutaa 10",
+      preferredLanguage: "fr",
+      adminId: ADMIN_UID,
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+
+  // Accept valid preferredLanguage ("am") on initial profile setup
+  await assertSucceeds(
+    setupDb.collection("users").doc(setupUid).set({
+      userId: setupUid,
+      displayName: "Dabalaa",
+      email: "setup_user@koofkeet.org",
+      role: "STUDENT",
+      gradeLevel: "Kutaa 10",
+      preferredLanguage: "am",
+      adminId: ADMIN_UID,
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+
+  // Owner can switch preferredLanguage to "en" and "om"
+  await assertSucceeds(
+    setupDb.collection("users").doc(setupUid).update({
+      preferredLanguage: "en",
+      updatedAt: new Date(Date.now() - 1000),
+    })
+  );
+  await assertSucceeds(
+    setupDb.collection("users").doc(setupUid).update({
+      preferredLanguage: "om",
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+
+  // Owner cannot update preferredLanguage to an unsupported code
+  await assertFails(
+    setupDb.collection("users").doc(setupUid).update({
+      preferredLanguage: "es",
+      updatedAt: new Date(Date.now() - 200),
+    })
+  );
+});
+
+test("AI Tutor interactions under users/{uid}/ai_chats are strictly private to the owning user", async () => {
+  await seedRoles();
+  const past = new Date(Date.now() - 2000);
+  const studentADb = testEnv.authenticatedContext(STUDENT_A_UID).firestore();
+  const studentBDb = testEnv.authenticatedContext(STUDENT_B_UID).firestore();
+  const teacherDb = testEnv.authenticatedContext(TEACHER_UID).firestore();
+  const parentDb = testEnv.authenticatedContext(PARENT_UID).firestore();
+  const adminDb = testEnv.authenticatedContext(ADMIN_UID, {
+    email: "koofkeetschoolmanagement@gmail.com",
+    email_verified: true,
+  }).firestore();
+
+  const chatRef = studentADb.collection("users").doc(STUDENT_A_UID).collection("ai_chats").doc("chat_1");
+  await assertSucceeds(
+    chatRef.set({
+      userId: STUDENT_A_UID,
+      prompt: "Explain photosynthesis",
+      response: "Photosynthesis converts light energy into glucose.",
+      subject: "Baayoolojii",
+      createdAt: past,
+    })
+  );
+
+  // Owning student can read and list own private AI chats
+  await assertSucceeds(studentADb.collection("users").doc(STUDENT_A_UID).collection("ai_chats").doc("chat_1").get());
+  await assertSucceeds(studentADb.collection("users").doc(STUDENT_A_UID).collection("ai_chats").get());
+
+  // Other students, teachers, parents, and even admins CANNOT read, list, write, or delete Student A's AI chats
+  for (const otherDb of [studentBDb, teacherDb, parentDb, adminDb]) {
+    await assertFails(otherDb.collection("users").doc(STUDENT_A_UID).collection("ai_chats").doc("chat_1").get());
+    await assertFails(otherDb.collection("users").doc(STUDENT_A_UID).collection("ai_chats").get());
+    await assertFails(otherDb.collection("users").doc(STUDENT_A_UID).collection("ai_chats").doc("chat_1").delete());
+    await assertFails(
+      otherDb.collection("users").doc(STUDENT_A_UID).collection("ai_chats").doc("chat_2").set({
+        userId: STUDENT_A_UID,
+        prompt: "Injected",
+        response: "Nope",
+        subject: "Herrega",
+        createdAt: past,
+      })
+    );
+  }
+
+  // Owning student can delete their own private chat
+  await assertSucceeds(chatRef.delete());
+});
+
+test("Daily attendance tracking: teachers mark Present/Absent/Late, update same-day history, and students/parents read scoped history", async () => {
+  await seedRoles();
+  const past = new Date(Date.now() - 4000);
+  const teacherDb = testEnv.authenticatedContext(TEACHER_UID).firestore();
+  const studentADb = testEnv.authenticatedContext(STUDENT_A_UID).firestore();
+  const studentBDb = testEnv.authenticatedContext(STUDENT_B_UID).firestore();
+  const parentDb = testEnv.authenticatedContext(PARENT_UID).firestore();
+  const adminDb = testEnv.authenticatedContext(ADMIN_UID, {
+    email: "koofkeetschoolmanagement@gmail.com",
+    email_verified: true,
+  }).firestore();
+
+  // Admin registers Student A as ACTIVE
+  await assertSucceeds(
+    adminDb.collection("student_registrations").doc("reg_chaltu").set({
+      studentUid: STUDENT_A_UID,
+      studentName: "Caaltuu",
+      studentCode: "KFK-101",
+      gradeLevel: "Kutaa 10",
+      section: "A",
+      parentUid: PARENT_UID,
+      parentName: "Maatii Ababaa",
+      adminId: ADMIN_UID,
+      teacherUids: [ADMIN_UID],
+      status: "ACTIVE",
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+
+  // Teacher can list active student registrations & STUDENT user profiles for daily roll call
+  await assertSucceeds(teacherDb.collection("student_registrations").where("status", "==", "ACTIVE").get());
+  await assertSucceeds(teacherDb.collection("users").where("role", "==", "STUDENT").get());
+  // Teacher cannot list non-student profiles (e.g. ADMIN)
+  await assertFails(teacherDb.collection("users").where("role", "==", "ADMIN").get());
+
+  const attDocId = `2026-11-25_${STUDENT_A_UID}_${TEACHER_UID}`;
+  const attRef = teacherDb.collection("attendance").doc(attDocId);
+
+  // Teacher marks Student A ABSENT on 2026-11-25
+  await assertSucceeds(
+    attRef.set({
+      studentId: STUDENT_A_UID,
+      studentName: "Caaltuu",
+      parentId: PARENT_UID,
+      teacherId: TEACHER_UID,
+      adminId: ADMIN_UID,
+      gradeLevel: "Kutaa 10",
+      dateLabel: "2026-11-25",
+      status: "ABSENT",
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+
+  // Teacher updates same-day record to PRESENT with a note (preserving createdAt & studentId)
+  await assertSucceeds(
+    attRef.update({
+      status: "PRESENT",
+      note: "Arrived after assembly",
+      updatedAt: new Date(Date.now() - 1000),
+    })
+  );
+
+  // Reject immutable createdAt or studentId mutation
+  await assertFails(
+    attRef.update({
+      studentId: STUDENT_B_UID,
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+  await assertFails(
+    attRef.update({
+      createdAt: new Date(Date.now() - 500),
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+
+  // Teacher, Student A, and Parent can query scoped attendance history
+  await assertSucceeds(teacherDb.collection("attendance").where("teacherId", "==", TEACHER_UID).get());
+  await assertSucceeds(studentADb.collection("attendance").where("studentId", "==", STUDENT_A_UID).get());
+  await assertSucceeds(parentDb.collection("attendance").where("parentId", "==", PARENT_UID).get());
+
+  // Student B & Parent cannot read Student A's record as Student B or write/delete attendance
+  await assertFails(studentBDb.collection("attendance").doc(attDocId).get());
+  await assertFails(studentBDb.collection("attendance").where("studentId", "==", STUDENT_A_UID).get());
+  await assertFails(studentADb.collection("attendance").doc(attDocId).delete());
+  await assertFails(
+    parentDb.collection("attendance").doc("2026-11-25_fake").set({
+      studentId: STUDENT_A_UID,
+      studentName: "Caaltuu",
+      teacherId: PARENT_UID,
+      adminId: ADMIN_UID,
+      gradeLevel: "Kutaa 10",
+      dateLabel: "2026-11-25",
+      status: "PRESENT",
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+
+  // Owning teacher can delete mistaken attendance record
+  await assertSucceeds(attRef.delete());
+});
+
+test("Teacher records, updates, lists, and deletes Grade 1-6 and Grade 7-8 subject grades in exam_results", async () => {
+  await seedRoles();
+  const past = new Date(Date.now() - 4000);
+  const teacherDb = testEnv.authenticatedContext(TEACHER_UID).firestore();
+  const studentADb = testEnv.authenticatedContext(STUDENT_A_UID).firestore();
+  const studentBDb = testEnv.authenticatedContext(STUDENT_B_UID).firestore();
+
+  const gradeRef = teacherDb.collection("exam_results").doc("grade_g7_ict_1");
+  await assertSucceeds(
+    gradeRef.set({
+      studentId: STUDENT_A_UID,
+      studentName: "Caaltuu",
+      parentId: PARENT_UID,
+      teacherId: TEACHER_UID,
+      teacherName: "Barsiisaa Tolasaa",
+      adminId: ADMIN_UID,
+      subject: "ICT",
+      gradeLevel: "Grade 7",
+      examName: "Term 1 Evaluation",
+      monthLabel: "2026-11",
+      score: 91.5,
+      maxScore: 100.0,
+      remarks: "Very good lab work",
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+
+  // Teacher can record Grade 1-6 subject ("Gadaafi Safuu")
+  await assertSucceeds(
+    teacherDb.collection("exam_results").doc("grade_g4_gadaa_1").set({
+      studentId: STUDENT_B_UID,
+      studentName: "Biqilaa",
+      teacherId: TEACHER_UID,
+      teacherName: "Barsiisaa Tolasaa",
+      adminId: ADMIN_UID,
+      subject: "Gadaafi Safuu",
+      gradeLevel: "Grade 4",
+      examName: "Class Assessment",
+      monthLabel: "2026-11",
+      score: 86.0,
+      maxScore: 100.0,
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+
+  // Teacher can update score while preserving createdAt and studentId
+  await assertSucceeds(
+    gradeRef.update({
+      score: 94.0,
+      remarks: "Updated practical grade",
+      updatedAt: new Date(Date.now() - 1000),
+    })
+  );
+
+  // Teacher & Student A can read scoped grades; Student B cannot read Student A's grade or delete it
+  await assertSucceeds(teacherDb.collection("exam_results").where("teacherId", "==", TEACHER_UID).get());
+  await assertSucceeds(studentADb.collection("exam_results").where("studentId", "==", STUDENT_A_UID).get());
+  await assertFails(studentBDb.collection("exam_results").doc("grade_g7_ict_1").get());
+  await assertFails(studentADb.collection("exam_results").doc("grade_g7_ict_1").delete());
+
+  // Owning teacher can delete their own erroneous grade entry
+  await assertSucceeds(gradeRef.delete());
+});
+
+test("Calendar sync: Teachers and Admins manage school_events while Students and Parents read school calendar", async () => {
+  await seedRoles();
+  const past = new Date(Date.now() - 4000);
+  const teacherDb = testEnv.authenticatedContext(TEACHER_UID).firestore();
+  const studentADb = testEnv.authenticatedContext(STUDENT_A_UID).firestore();
+  const parentDb = testEnv.authenticatedContext(PARENT_UID).firestore();
+  const adminDb = testEnv.authenticatedContext(ADMIN_UID, {
+    email: "koofkeetschoolmanagement@gmail.com",
+    email_verified: true,
+  }).firestore();
+
+  const evRef = teacherDb.collection("school_events").doc("assign_sync_1");
+  await assertSucceeds(
+    evRef.set({
+      title: "Herrega Midterm Review",
+      description: "Grade 7 Mathematics midterm prep",
+      eventDateLabel: "2026-11-28",
+      startTimeLabel: "09:00",
+      endTimeLabel: "10:00",
+      category: "EXAM",
+      gradeLevel: "Grade 7",
+      subject: "Herrega",
+      sourceType: "MANUAL",
+      createdByUid: TEACHER_UID,
+      createdByName: "Barsiisaa Tolasaa",
+      adminId: ADMIN_UID,
+      schoolId: "koofkeet_main",
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+
+  // Students and Parents can list & read school calendar events
+  await assertSucceeds(studentADb.collection("school_events").where("schoolId", "==", "koofkeet_main").get());
+  await assertSucceeds(parentDb.collection("school_events").doc("assign_sync_1").get());
+
+  // Students and Parents cannot create, update, or delete calendar events
+  await assertFails(
+    studentADb.collection("school_events").doc("student_fake").set({
+      title: "No School",
+      eventDateLabel: "2026-11-29",
+      startTimeLabel: "08:00",
+      endTimeLabel: "09:00",
+      category: "HOLIDAY",
+      gradeLevel: "Hunda",
+      sourceType: "MANUAL",
+      createdByUid: STUDENT_A_UID,
+      createdByName: "Caaltuu",
+      adminId: ADMIN_UID,
+      schoolId: "koofkeet_main",
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+  await assertFails(studentADb.collection("school_events").doc("assign_sync_1").delete());
+
+  // Owning teacher can update & delete; admin can update
+  await assertSucceeds(
+    evRef.update({
+      title: "Herrega Midterm & ICT Quiz",
+      updatedAt: new Date(Date.now() - 1000),
+    })
+  );
+  await assertSucceeds(
+    adminDb.collection("school_events").doc("assign_sync_1").update({
+      category: "GENERAL",
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+  await assertSucceeds(evRef.delete());
+});
+
+
+
+
+
+

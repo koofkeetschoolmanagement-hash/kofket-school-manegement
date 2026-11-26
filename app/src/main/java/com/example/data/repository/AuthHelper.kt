@@ -45,6 +45,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.awaitClose
@@ -161,6 +162,34 @@ fun signOut(
                 onSignOutComplete()
             }
         }
+    }
+}
+
+private val RESET_EMAIL_REGEX = Regex("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")
+
+fun isValidResetEmail(email: String): Boolean =
+    RESET_EMAIL_REGEX.matches(email.trim())
+
+suspend fun sendPasswordResetEmail(
+    email: String,
+    languageCode: String? = null,
+    auth: FirebaseAuth = Firebase.auth
+): Result<Unit> {
+    val normalizedEmail = email.trim()
+    if (!isValidResetEmail(normalizedEmail)) {
+        return Result.failure(IllegalArgumentException("Invalid email address"))
+    }
+    return try {
+        if (!languageCode.isNullOrBlank()) {
+            auth.setLanguageCode(languageCode)
+        }
+        auth.sendPasswordResetEmail(normalizedEmail).await()
+        Result.success(Unit)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(AUTH_TAG, "Password reset email failed: ${e.message}", e)
+        Result.failure(e)
     }
 }
 

@@ -292,10 +292,10 @@ fun CommunicationScreen(
         val targetParentId = target?.parentId ?: profile.userId
         val targetParentName = target?.parentName ?: profile.displayName
         val studentId by remember(target) {
-            mutableStateOf(target?.studentId ?: profile.linkedStudentId.ifBlank { "student_record" })
+            mutableStateOf(target?.studentId ?: profile.linkedStudentId)
         }
         var studentName by remember(target) {
-            mutableStateOf(target?.studentName ?: profile.linkedStudentName.ifBlank { "Barataa Mana Barumsaa" })
+            mutableStateOf(target?.studentName ?: profile.linkedStudentName)
         }
         var subject by remember(target) {
             mutableStateOf(if (isReplyToParent) "Re: ${target.subject}" else "")

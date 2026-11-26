@@ -6,6 +6,8 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
+import com.example.data.model.AttendanceRecord
+import com.example.data.model.ExamResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.OutputStream
@@ -66,6 +68,75 @@ object ReportExporter {
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    suspend fun exportCsv(
+        context: Context,
+        uri: Uri,
+        report: MonthlyReportData,
+        examResults: List<ExamResult> = emptyList(),
+        attendance: List<AttendanceRecord> = emptyList()
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val outputStream = context.contentResolver.openOutputStream(uri)
+                ?: return@withContext Result.failure(IllegalStateException("Unable to open CSV destination"))
+            val csv = buildCsvContent(report, examResults, attendance)
+            outputStream.use { stream ->
+                // UTF-8 BOM for clean Excel / Google Sheets rendering of Amharic & Afaan Oromoo
+                stream.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
+                stream.write(csv.toByteArray(Charsets.UTF_8))
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    fun buildCsvContent(
+        report: MonthlyReportData,
+        examResults: List<ExamResult> = emptyList(),
+        attendance: List<AttendanceRecord> = emptyList()
+    ): String {
+        fun esc(value: String): String {
+            val clean = value.replace("\r\n", " ").replace("\n", " ")
+            return "\"${clean.replace("\"", "\"\"")}\""
+        }
+        return buildString {
+            appendLine("Section,Field,Value,Extra1,Extra2,Extra3,Extra4")
+            appendLine("Summary,Month,${esc(report.monthLabel)},,,,")
+            appendLine("Summary,Total Students,${report.totalStudents},,,,")
+            appendLine("Summary,Total Teachers,${report.totalTeachers},,,,")
+            appendLine("Summary,Assignments,${report.totalAssignments},,,,")
+            appendLine("Summary,Exams Recorded,${report.totalExamsRecorded},,,,")
+            appendLine("Summary,Average Exam Score,${"%.1f".format(report.averageExamScore)}%,,,,")
+            appendLine("Summary,Attendance Rate,${"%.1f".format(report.attendanceRatePercent)}%,,,,")
+            appendLine("Summary,Early Warnings Open,${report.openEarlyWarnings},Resolved,${report.resolvedEarlyWarnings},,")
+            appendLine("")
+            appendLine("Marklist Summary,Student Name,Grade Level,Average Score %,Attendance %,,")
+            report.studentRows.forEach { row ->
+                appendLine(
+                    "Marklist Summary,${esc(row.studentName)},${esc(row.gradeLevel)},${"%.1f".format(row.averageScore)},${"%.1f".format(row.attendancePercent)},,"
+                )
+            }
+            if (examResults.isNotEmpty()) {
+                appendLine("")
+                appendLine("Subject Grades,Student Name,Grade Level,Subject,Assessment,Month,Score %,Remarks")
+                examResults.forEach { r ->
+                    appendLine(
+                        "Subject Grades,${esc(r.studentName)},${esc(r.gradeLevel)},${esc(r.subject)},${esc(r.examName)},${esc(r.monthLabel)},${"%.1f".format(r.score)},${esc(r.remarks)}"
+                    )
+                }
+            }
+            if (attendance.isNotEmpty()) {
+                appendLine("")
+                appendLine("Attendance History,Date,Student Name,Grade Level,Status,Note,")
+                attendance.forEach { rec ->
+                    appendLine(
+                        "Attendance History,${esc(rec.dateLabel)},${esc(rec.studentName)},${esc(rec.gradeLevel)},${esc(rec.status)},${esc(rec.note)},"
+                    )
+                }
+            }
         }
     }
 

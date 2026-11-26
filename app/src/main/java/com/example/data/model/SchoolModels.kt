@@ -93,6 +93,7 @@ data class UserProfile(
     val displayName: String = "",
     val email: String = "",
     val role: String = UserRole.STUDENT.name,
+    val preferredLanguage: String = "om",
     val gradeLevel: String = "",
     val subject: String = "",
     val linkedStudentId: String = "",
@@ -349,4 +350,56 @@ data class Announcement(
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
+enum class CalendarEventCategory(val labelOromo: String, val labelEnglish: String) {
+    GENERAL("Waliigalaa", "General"),
+    EXAM("Qormaata", "Exam"),
+    ASSIGNMENT("Hojii Manaa", "Assignment"),
+    HOLIDAY("Ayyaana / Boqonnaa", "Holiday"),
+    MEETING("Walgahii Maatii", "Meeting");
+
+    companion object {
+        fun fromRaw(raw: String?): CalendarEventCategory =
+            entries.firstOrNull { it.name == raw } ?: GENERAL
+    }
+}
+
+@Keep
+@IgnoreExtraProperties
+data class SchoolCalendarEvent(
+    @DocumentId val id: String = "",
+    val title: String = "",
+    val description: String = "",
+    val eventDateLabel: String = "",
+    val startTimeLabel: String = "08:30",
+    val endTimeLabel: String = "09:30",
+    val category: String = CalendarEventCategory.GENERAL.name,
+    val gradeLevel: String = "Hunda",
+    val subject: String = "",
+    val sourceType: String = "MANUAL",
+    val sourceId: String = "",
+    val createdByUid: String = "",
+    val createdByName: String = "",
+    val adminId: String = "",
+    val schoolId: String = SCHOOL_ID_MAIN,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+)
+
+enum class SyncPhase {
+    SYNCED,
+    SYNCING,
+    OFFLINE_PENDING,
+    ERROR
+}
+
+data class AttendanceSyncStatus(
+    val phase: SyncPhase = SyncPhase.SYNCED,
+    val pendingWriteCount: Int = 0,
+    val isFromCache: Boolean = false,
+    val totalRecords: Int = 0,
+    val lastSyncedMillis: Long = 0L,
+    val message: String = ""
+)
+
 fun serverTime(): Any = FieldValue.serverTimestamp()
+

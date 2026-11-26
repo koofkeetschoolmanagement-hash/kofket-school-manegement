@@ -36,6 +36,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -50,12 +51,15 @@ import com.example.data.model.Assignment
 import com.example.data.model.AssignmentSubmission
 import com.example.data.model.AttendanceRecord
 import com.example.data.model.AttendanceStatus
+import com.example.data.model.AttendanceSyncStatus
+import com.example.data.model.CalendarEventCategory
 import com.example.data.model.ExamResult
 import com.example.data.model.LearningMaterial
 import com.example.data.model.MaterialType
 import com.example.data.model.Quiz
 import com.example.data.model.QuizAttempt
 import com.example.data.model.QuizQuestion
+import com.example.data.model.SchoolCalendarEvent
 import com.example.data.model.StudentRegistration
 import com.example.data.model.UserProfile
 import com.example.data.model.UserRole
@@ -67,7 +71,9 @@ enum class AcademicSection(val titleOromo: String) {
     HOMEWORK("Hojii Manaa"),
     QUIZZES("Qormaataa & Quiz"),
     EXAMS("Bu'aa Qormaataa"),
+    MARKLIST("Marklistii (Marklist)"),
     ATTENDANCE("To'annoo Argamaa"),
+    CALENDAR("Kalandarii (Calendar)"),
     MATERIALS("Meeshaalee")
 }
 
@@ -90,9 +96,27 @@ fun AcademicsScreen(
     onRecordExamResult: (String, String, String, String, String, String, String, Double, String) -> Unit,
     onRecordAttendance: (String, String, String, String, String, AttendanceStatus, String) -> Unit,
     onAddMaterial: (String, String, String, String, MaterialType, String, String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    requestedSection: AcademicSection? = null,
+    onConsumeRequestedSection: () -> Unit = {},
+    onMarkAllPresent: (String, List<StudentRegistration>, List<AttendanceRecord>) -> Unit = { _, _, _ -> },
+    onDeleteAttendance: (String) -> Unit = {},
+    onDeleteExamResult: (String) -> Unit = {},
+    attendanceSyncStatus: AttendanceSyncStatus = AttendanceSyncStatus(),
+    onSyncAttendance: () -> Unit = {},
+    calendarEvents: List<SchoolCalendarEvent> = emptyList(),
+    onCreateCalendarEvent: (String, String, String, String, String, CalendarEventCategory, String, String) -> Unit = { _, _, _, _, _, _, _, _ -> },
+    onDeleteCalendarEvent: (String) -> Unit = {},
+    onSyncAcademicsToCalendar: () -> Unit = {},
+    onShowStatus: (String) -> Unit = {}
 ) {
-    var selectedSection by remember { mutableStateOf(AcademicSection.HOMEWORK) }
+    var selectedSection by remember { mutableStateOf(requestedSection ?: AcademicSection.HOMEWORK) }
+    LaunchedEffect(requestedSection) {
+        if (requestedSection != null) {
+            selectedSection = requestedSection
+            onConsumeRequestedSection()
+        }
+    }
     val canManage = profile.userRole == UserRole.TEACHER || profile.userRole == UserRole.ADMIN
 
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
@@ -141,14 +165,39 @@ fun AcademicsScreen(
                     canManage = canManage,
                     students = students,
                     examResults = examResults,
-                    onRecordExamResult = onRecordExamResult
+                    onRecordExamResult = onRecordExamResult,
+                    onDeleteExamResult = onDeleteExamResult
+                )
+                AcademicSection.MARKLIST -> MarklistTab(
+                    profile = profile,
+                    canManage = canManage,
+                    students = students,
+                    examResults = examResults,
+                    submissions = submissions,
+                    quizAttempts = quizAttempts,
+                    onRecordGrade = onRecordExamResult,
+                    onDeleteGrade = onDeleteExamResult
                 )
                 AcademicSection.ATTENDANCE -> AttendanceTab(
                     profile = profile,
                     canManage = canManage,
                     students = students,
                     attendance = attendance,
-                    onRecordAttendance = onRecordAttendance
+                    onRecordAttendance = onRecordAttendance,
+                    onMarkAllPresent = onMarkAllPresent,
+                    onDeleteAttendance = onDeleteAttendance,
+                    syncStatus = attendanceSyncStatus,
+                    onSyncAttendance = onSyncAttendance
+                )
+                AcademicSection.CALENDAR -> CalendarSyncTab(
+                    profile = profile,
+                    canManage = canManage,
+                    events = calendarEvents,
+                    assignments = assignments,
+                    onCreateEvent = onCreateCalendarEvent,
+                    onDeleteEvent = onDeleteCalendarEvent,
+                    onSyncAcademics = onSyncAcademicsToCalendar,
+                    onShowStatus = onShowStatus
                 )
                 AcademicSection.MATERIALS -> MaterialsTab(
                     canManage = canManage,
@@ -318,33 +367,12 @@ private fun AssignmentsTab(
     }
 
     if (showCreateDialog) {
-        var title by remember { mutableStateOf("") }
-        var desc by remember { mutableStateOf("") }
-        var subject by remember { mutableStateOf("Herrega") }
-        var grade by remember { mutableStateOf("Kutaa 10") }
-        var due by remember { mutableStateOf("2026-11-30") }
-        AlertDialog(
-            onDismissRequest = { showCreateDialog = false },
-            title = { Text("Hojii Manaa Haaraa Kenni") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Mata-duree") }, singleLine = true)
-                    OutlinedTextField(value = subject, onValueChange = { subject = it }, label = { Text("Gosa Barumsaa") }, singleLine = true)
-                    OutlinedTextField(value = grade, onValueChange = { grade = it }, label = { Text("Kutaa") }, singleLine = true)
-                    OutlinedTextField(value = due, onValueChange = { due = it }, label = { Text("Guyyaa dhumaa") }, singleLine = true)
-                    OutlinedTextField(value = desc, onValueChange = { desc = it }, label = { Text("Ibsa fi Gaaffilee") }, minLines = 3)
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        onCreateAssignment(title, desc, subject, grade, due)
-                        showCreateDialog = false
-                    },
-                    enabled = title.trim().length >= 2 && desc.trim().length >= 2
-                ) { Text("Maxxansi") }
-            },
-            dismissButton = { TextButton(onClick = { showCreateDialog = false }) { Text("Dhiisi") } }
+        CreateCurriculumAssignmentDialog(
+            onDismiss = { showCreateDialog = false },
+            onCreate = { title, desc, subject, grade, due ->
+                onCreateAssignment(title, desc, subject, grade, due)
+                showCreateDialog = false
+            }
         )
     }
 
@@ -376,8 +404,9 @@ private fun AssignmentsTab(
     }
 
     gradingTarget?.let { sub ->
-        var scoreStr by remember { mutableStateOf("85") }
-        var feedback by remember { mutableStateOf("Hojii gaarii!") }
+        var scoreStr by remember { mutableStateOf("") }
+        var feedback by remember { mutableStateOf("") }
+        val parsedScore = scoreStr.toDoubleOrNull()
         AlertDialog(
             onDismissRequest = { gradingTarget = null },
             title = { Text("Qabxii Kenni: ${sub.studentName}") },
@@ -388,11 +417,13 @@ private fun AssignmentsTab(
                 }
             },
             confirmButton = {
-                Button(onClick = {
-                    val s = scoreStr.toDoubleOrNull() ?: 0.0
-                    onGradeSubmission(sub.id, s, feedback)
-                    gradingTarget = null
-                }) { Text("Galmeessi") }
+                Button(
+                    onClick = {
+                        onGradeSubmission(sub.id, parsedScore ?: 0.0, feedback)
+                        gradingTarget = null
+                    },
+                    enabled = parsedScore != null && parsedScore in 0.0..100.0
+                ) { Text("Galmeessi") }
             },
             dismissButton = { TextButton(onClick = { gradingTarget = null }) { Text("Dhiisi") } }
         )
@@ -512,8 +543,8 @@ private fun QuizzesTab(
 
     if (showCreateQuiz) {
         var title by remember { mutableStateOf("") }
-        var subject by remember { mutableStateOf("Herrega") }
-        var grade by remember { mutableStateOf("Kutaa 10") }
+        var subject by remember { mutableStateOf("") }
+        var grade by remember { mutableStateOf("") }
         var qPrompt by remember { mutableStateOf("") }
         var optA by remember { mutableStateOf("") }
         var optB by remember { mutableStateOf("") }
@@ -547,7 +578,12 @@ private fun QuizzesTab(
                         onCreateQuiz(title, subject, grade, 15, listOf(q))
                         showCreateQuiz = false
                     },
-                    enabled = title.trim().length >= 2 && qPrompt.trim().length >= 2 && optA.isNotBlank() && optB.isNotBlank()
+                    enabled = title.trim().length >= 2 &&
+                        subject.trim().length >= 2 &&
+                        grade.trim().isNotEmpty() &&
+                        qPrompt.trim().length >= 2 &&
+                        optA.isNotBlank() &&
+                        optB.isNotBlank()
                 ) { Text("Qopheessi") }
             },
             dismissButton = { TextButton(onClick = { showCreateQuiz = false }) { Text("Dhiisi") } }

@@ -19,6 +19,7 @@ import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Grade
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -26,6 +27,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -60,7 +62,8 @@ fun ExamResultsTab(
     canManage: Boolean,
     students: List<StudentRegistration>,
     examResults: List<ExamResult>,
-    onRecordExamResult: (String, String, String, String, String, String, String, Double, String) -> Unit
+    onRecordExamResult: (String, String, String, String, String, String, String, Double, String) -> Unit,
+    onDeleteExamResult: (String) -> Unit = {}
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
 
@@ -126,17 +129,31 @@ fun ExamResultsTab(
                                 Text("Yaada: ${res.remarks}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                             }
                         }
-                        Surface(
-                            shape = MaterialTheme.shapes.small,
-                            color = if (isLow) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
-                        ) {
-                            Text(
-                                text = "${"%.1f".format(res.score)}%",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isLow) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = if (isLow) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Text(
+                                    text = "${"%.1f".format(res.score)}%",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isLow) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
+                            if (canManage && (profile.userRole == com.example.data.model.UserRole.ADMIN || res.teacherId == profile.userId)) {
+                                IconButton(
+                                    onClick = { onDeleteExamResult(res.id) },
+                                    modifier = Modifier.size(40.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.DeleteOutline,
+                                        contentDescription = "Haqi",
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -145,201 +162,13 @@ fun ExamResultsTab(
     }
 
     if (showAddDialog) {
-        val defaultStudent = students.firstOrNull()
-        var studentId by remember { mutableStateOf(defaultStudent?.studentUid ?: profile.userId) }
-        var studentName by remember { mutableStateOf(defaultStudent?.studentName ?: profile.displayName) }
-        var parentId by remember { mutableStateOf(defaultStudent?.parentUid.orEmpty()) }
-        var subject by remember { mutableStateOf("Herrega") }
-        var grade by remember { mutableStateOf(defaultStudent?.gradeLevel ?: "Kutaa 10") }
-        var examName by remember { mutableStateOf("Qormaata Ji'aa") }
-        var monthLabel by remember { mutableStateOf("Sadaasa 2026") }
-        var scoreStr by remember { mutableStateOf("82") }
-        var remarks by remember { mutableStateOf("Hojii gaarii") }
-
-        AlertDialog(
-            onDismissRequest = { showAddDialog = false },
-            title = { Text("Bu'aa Qormaataa Galchi") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (students.isNotEmpty()) {
-                        Text("Barataa filadhu:", style = MaterialTheme.typography.labelMedium)
-                        students.take(4).forEach { s ->
-                            FilterChip(
-                                selected = studentId == s.studentUid,
-                                onClick = {
-                                    studentId = s.studentUid
-                                    studentName = s.studentName
-                                    parentId = s.parentUid
-                                    grade = s.gradeLevel
-                                },
-                                label = { Text("${s.studentName} (${s.gradeLevel})") }
-                            )
-                        }
-                    }
-                    OutlinedTextField(value = studentName, onValueChange = { studentName = it }, label = { Text("Maqaa Barataa") }, singleLine = true)
-                    OutlinedTextField(value = subject, onValueChange = { subject = it }, label = { Text("Gosa Barumsaa") }, singleLine = true)
-                    OutlinedTextField(value = examName, onValueChange = { examName = it }, label = { Text("Maqaa Qormaataa") }, singleLine = true)
-                    OutlinedTextField(value = monthLabel, onValueChange = { monthLabel = it }, label = { Text("Ji'a (Month)") }, singleLine = true)
-                    OutlinedTextField(value = scoreStr, onValueChange = { scoreStr = it }, label = { Text("Qabxii (0-100)") }, singleLine = true)
-                    OutlinedTextField(value = remarks, onValueChange = { remarks = it }, label = { Text("Yaada") }, singleLine = true)
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val score = scoreStr.toDoubleOrNull() ?: 0.0
-                        onRecordExamResult(studentId, studentName, parentId, subject, grade, examName, monthLabel, score, remarks)
-                        showAddDialog = false
-                    },
-                    enabled = studentName.trim().length >= 2 && subject.trim().length >= 2
-                ) { Text("Galmeessi") }
-            },
-            dismissButton = { TextButton(onClick = { showAddDialog = false }) { Text("Dhiisi") } }
-        )
-    }
-}
-
-@Composable
-fun AttendanceTab(
-    profile: UserProfile,
-    canManage: Boolean,
-    students: List<StudentRegistration>,
-    attendance: List<AttendanceRecord>,
-    onRecordAttendance: (String, String, String, String, String, AttendanceStatus, String) -> Unit
-) {
-    var showAddDialog by remember { mutableStateOf(false) }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                SectionHeader(
-                    title = "To'annoo Argamaa (Attendance History)",
-                    subtitle = "Seenaa dhufuu fi hafuu guyyaa guyyaan",
-                    modifier = Modifier.weight(1f)
-                )
-                if (canManage) {
-                    Button(
-                        onClick = { showAddDialog = true },
-                        modifier = Modifier.testTag("record_attendance_button")
-                    ) {
-                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Galmeessi")
-                    }
-                }
+        RecordSubjectGradeDialog(
+            students = students,
+            onDismiss = { showAddDialog = false },
+            onSave = { studentId, studentName, parentId, subject, grade, examName, monthLabel, score, remarks ->
+                onRecordExamResult(studentId, studentName, parentId, subject, grade, examName, monthLabel, score, remarks)
+                showAddDialog = false
             }
-        }
-
-        if (attendance.isEmpty()) {
-            item {
-                EmptyStateBanner(
-                    icon = Icons.Filled.CheckCircle,
-                    title = "Seenaan argamaa duwwaadha",
-                    message = "Yeroo barsiisaan argamaa galmeessu asitti mul'ata."
-                )
-            }
-        } else {
-            items(attendance, key = { it.id }) { rec ->
-                val status = AttendanceStatus.fromRaw(rec.status)
-                Card(
-                    shape = MaterialTheme.shapes.medium,
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text("${rec.studentName} (${rec.gradeLevel})", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                            Text("Guyyaa: ${rec.dateLabel}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            if (rec.note.isNotBlank()) {
-                                Text(rec.note, style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                        Surface(
-                            shape = MaterialTheme.shapes.small,
-                            color = when (status) {
-                                AttendanceStatus.PRESENT -> MaterialTheme.colorScheme.primaryContainer
-                                AttendanceStatus.ABSENT -> MaterialTheme.colorScheme.errorContainer
-                                AttendanceStatus.LATE -> MaterialTheme.colorScheme.secondaryContainer
-                            }
-                        ) {
-                            Text(
-                                text = status.labelOromo,
-                                style = MaterialTheme.typography.labelMedium,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (showAddDialog) {
-        val defaultStudent = students.firstOrNull()
-        var studentId by remember { mutableStateOf(defaultStudent?.studentUid ?: profile.userId) }
-        var studentName by remember { mutableStateOf(defaultStudent?.studentName ?: profile.displayName) }
-        var parentId by remember { mutableStateOf(defaultStudent?.parentUid.orEmpty()) }
-        var grade by remember { mutableStateOf(defaultStudent?.gradeLevel ?: "Kutaa 10") }
-        var dateLabel by remember { mutableStateOf("2026-11-22") }
-        var status by remember { mutableStateOf(AttendanceStatus.PRESENT) }
-        var note by remember { mutableStateOf("") }
-
-        AlertDialog(
-            onDismissRequest = { showAddDialog = false },
-            title = { Text("Argamaa Guyyaa Galmeessi") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (students.isNotEmpty()) {
-                        students.take(4).forEach { s ->
-                            FilterChip(
-                                selected = studentId == s.studentUid,
-                                onClick = {
-                                    studentId = s.studentUid
-                                    studentName = s.studentName
-                                    parentId = s.parentUid
-                                    grade = s.gradeLevel
-                                },
-                                label = { Text("${s.studentName} (${s.gradeLevel})") }
-                            )
-                        }
-                    }
-                    OutlinedTextField(value = studentName, onValueChange = { studentName = it }, label = { Text("Maqaa Barataa") }, singleLine = true)
-                    OutlinedTextField(value = dateLabel, onValueChange = { dateLabel = it }, label = { Text("Guyyaa (Date)") }, singleLine = true)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        AttendanceStatus.entries.forEach { st ->
-                            FilterChip(
-                                selected = status == st,
-                                onClick = { status = st },
-                                label = { Text(st.name) }
-                            )
-                        }
-                    }
-                    OutlinedTextField(value = note, onValueChange = { note = it }, label = { Text("Yaadannoo (Optional)") }, singleLine = true)
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        onRecordAttendance(studentId, studentName, parentId, grade, dateLabel, status, note)
-                        showAddDialog = false
-                    },
-                    enabled = studentName.trim().length >= 2 && dateLabel.trim().length >= 4
-                ) { Text("Galmeessi") }
-            },
-            dismissButton = { TextButton(onClick = { showAddDialog = false }) { Text("Dhiisi") } }
         )
     }
 }
@@ -437,8 +266,8 @@ fun MaterialsTab(
     if (showAddDialog) {
         var title by remember { mutableStateOf("") }
         var desc by remember { mutableStateOf("") }
-        var subject by remember { mutableStateOf("Baayoolojii") }
-        var grade by remember { mutableStateOf("Kutaa 10") }
+        var subject by remember { mutableStateOf("") }
+        var grade by remember { mutableStateOf("") }
         var type by remember { mutableStateOf(MaterialType.PDF) }
         var url by remember { mutableStateOf("") }
         var body by remember { mutableStateOf("") }
@@ -467,7 +296,10 @@ fun MaterialsTab(
                         onAddMaterial(title, desc, subject, grade, type, url, body)
                         showAddDialog = false
                     },
-                    enabled = title.trim().length >= 2 && desc.trim().length >= 2
+                    enabled = title.trim().length >= 2 &&
+                        desc.trim().length >= 2 &&
+                        subject.trim().length >= 2 &&
+                        grade.trim().isNotEmpty()
                 ) { Text("Fe'i") }
             },
             dismissButton = { TextButton(onClick = { showAddDialog = false }) { Text("Dhiisi") } }

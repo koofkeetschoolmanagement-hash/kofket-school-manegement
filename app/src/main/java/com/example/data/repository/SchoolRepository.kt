@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import android.content.Context
 import com.example.R
+import com.example.core.AppLanguage
 import com.example.core.OperationType
 import com.example.core.handleFirestoreError
 import com.example.data.model.Assignment
@@ -96,6 +97,7 @@ class SchoolRepository(
     suspend fun onboardCurrentUser(
         displayName: String,
         gradeLevel: String,
+        preferredLanguage: AppLanguage,
         claimSchoolAdminIfUninitialized: Boolean
     ): Result<UserProfile> {
         val user = auth.currentUser
@@ -135,7 +137,7 @@ class SchoolRepository(
                     resolvedRole = UserRole.STUDENT
                     resolvedAdminId = meta?.adminUid ?: uid
                     resolvedSubject = ""
-                    resolvedGrade = gradeLevel.ifBlank { "Kutaa 10" }
+                    resolvedGrade = gradeLevel.trim()
                     resolvedLinkedStudentId = ""
                     resolvedLinkedStudentName = ""
                 }
@@ -162,11 +164,17 @@ class SchoolRepository(
                 }
             }
 
+            val resolvedDisplayName = displayName.trim().ifBlank {
+                user.displayName?.trim().orEmpty()
+            }
+            require(resolvedDisplayName.length >= 2) { "Maaloo maqaa guutuu keessan galchaa" }
+
             val userPayload = mapOf(
                 "userId" to uid,
-                "displayName" to displayName.trim().ifBlank { user.displayName ?: "Fayyadamaa Koofkeet" },
+                "displayName" to resolvedDisplayName,
                 "email" to email.ifBlank { "user@koofkeet.org" },
                 "role" to resolvedRole.name,
+                "preferredLanguage" to preferredLanguage.code,
                 "gradeLevel" to resolvedGrade,
                 "subject" to resolvedSubject,
                 "linkedStudentId" to resolvedLinkedStudentId,
@@ -188,7 +196,14 @@ class SchoolRepository(
             batch.commit().await()
             val saved = db.collection("users").document(uid).get().await()
                 .toObject(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                ?: UserProfile(userId = uid, displayName = displayName, email = email, role = resolvedRole.name, adminId = resolvedAdminId)
+                ?: UserProfile(
+                    userId = uid,
+                    displayName = resolvedDisplayName,
+                    email = email,
+                    role = resolvedRole.name,
+                    preferredLanguage = preferredLanguage.code,
+                    adminId = resolvedAdminId
+                )
             Result.success(saved)
         } catch (e: CancellationException) {
             throw e
@@ -196,6 +211,23 @@ class SchoolRepository(
             handleFirestoreError(e, OperationType.WRITE, "users/$uid")
             Result.failure(e)
         }
+    }
+
+    suspend fun updatePreferredLanguage(language: AppLanguage): Result<Unit> = try {
+        val uid = requireUserId()
+        db.collection("users").document(uid)
+            .update(
+                mapOf(
+                    "preferredLanguage" to language.code,
+                    "updatedAt" to serverTime()
+                )
+            ).await()
+        Result.success(Unit)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.UPDATE, "users/${auth.currentUser?.uid}")
+        Result.failure(e)
     }
 
     fun observeTeacherAssignments(): Flow<List<TeacherAssignment>> {
@@ -249,24 +281,127 @@ class SchoolRepository(
         val uid = requireUserId()
         val normalized = email.trim().lowercase()
         require(normalized.contains("@")) { "Imeelii sirrii galchaa" }
-        val payload = buildMap<String, Any> {
-            put("email", normalized)
-            put("role", role.name)
-            put("fullName", fullName.trim())
-            gradeLevel.trim().takeIf { it.isNotEmpty() }?.let { put("gradeLevel", it) }
-            subject.trim().takeIf { it.isNotEmpty() }?.let { put("subject", it) }
-            linkedStudentId.trim().takeIf { it.isNotEmpty() }?.let { put("linkedStudentId", it) }
-            linkedStudentName.trim().takeIf { it.isNotEmpty() }?.let { put("linkedStudentName", it) }
-            put("adminId", uid)
-            put("createdAt", serverTime())
-            put("updatedAt", serverTime())
+        val docRef = db.collection("role_grants").document(normalized)
+        val existingSnap = docRef.get().await()
+        if (existingSnap.exists()) {
+            val updates = buildMap<String, Any> {
+                put("email", normalized)
+                put("role", role.name)
+                put("fullName", fullName.trim())
+                put("gradeLevel", gradeLevel.trim().take(40))
+                put("subject", subject.trim().take(60))
+                put("linkedStudentId", linkedStudentId.trim().take(128))
+                put("linkedStudentName", linkedStudentName.trim().take(100))
+                put("adminId", uid)
+                put("updatedAt", serverTime())
+            }
+            docRef.update(updates).await()
+        } else {
+            val payload = buildMap<String, Any> {
+                put("email", normalized)
+                put("role", role.name)
+                put("fullName", fullName.trim())
+                gradeLevel.trim().takeIf { it.isNotEmpty() }?.let { put("gradeLevel", it.take(40)) }
+                subject.trim().takeIf { it.isNotEmpty() }?.let { put("subject", it.take(60)) }
+                linkedStudentId.trim().takeIf { it.isNotEmpty() }?.let { put("linkedStudentId", it.take(128)) }
+                linkedStudentName.trim().takeIf { it.isNotEmpty() }?.let { put("linkedStudentName", it.take(100)) }
+                put("adminId", uid)
+                put("createdAt", serverTime())
+                put("updatedAt", serverTime())
+            }
+            docRef.set(payload).await()
         }
-        db.collection("role_grants").document(normalized).set(payload).await()
         Result.success(Unit)
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
         handleFirestoreError(e, OperationType.CREATE, "role_grants")
+        Result.failure(e)
+    }
+
+    fun observeUsers(profile: UserProfile): Flow<List<UserProfile>> {
+        val uid = auth.currentUser?.uid ?: return kotlinx.coroutines.flow.emptyFlow()
+        if (profile.userRole != UserRole.ADMIN) return kotlinx.coroutines.flow.emptyFlow()
+        val query = if (profile.email.equals(BOOTSTRAP_ADMIN_EMAIL, ignoreCase = true)) {
+            db.collection("users")
+        } else {
+            db.collection("users").whereEqualTo("adminId", uid)
+        }
+        return query.snapshots()
+            .map { snap -> snap.toObjects(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE) }
+            .handleStreamErrors(OperationType.LIST, "users", uid)
+    }
+
+    fun observeRoleGrants(profile: UserProfile): Flow<List<RoleGrant>> {
+        val uid = auth.currentUser?.uid ?: return kotlinx.coroutines.flow.emptyFlow()
+        if (profile.userRole != UserRole.ADMIN) return kotlinx.coroutines.flow.emptyFlow()
+        val query = if (profile.email.equals(BOOTSTRAP_ADMIN_EMAIL, ignoreCase = true)) {
+            db.collection("role_grants")
+        } else {
+            db.collection("role_grants").whereEqualTo("adminId", uid)
+        }
+        return query.snapshots()
+            .map { snap -> snap.toObjects(RoleGrant::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE) }
+            .handleStreamErrors(OperationType.LIST, "role_grants", uid)
+    }
+
+    suspend fun updateUserRole(
+        targetUser: UserProfile,
+        newRole: UserRole,
+        subject: String,
+        gradeLevel: String
+    ): Result<Unit> = try {
+        requireUserId()
+        require(targetUser.userId.isNotBlank()) { "User ID hin argamne" }
+        require(
+            !(targetUser.email.equals(BOOTSTRAP_ADMIN_EMAIL, ignoreCase = true) && newRole != UserRole.ADMIN)
+        ) { "Admin jalqabaa (Bootstrap Admin) gara gahee biraatti jijjiiruun hin danda'amu" }
+
+        val userRef = db.collection("users").document(targetUser.userId)
+        val adminRef = db.collection("admins").document(targetUser.userId)
+        val adminDocExists = adminRef.get().await().exists()
+
+        val batch = db.batch()
+        batch.update(
+            userRef,
+            mapOf(
+                "role" to newRole.name,
+                "subject" to subject.trim().take(60),
+                "gradeLevel" to gradeLevel.trim().take(40),
+                "updatedAt" to serverTime()
+            )
+        )
+        if (newRole == UserRole.ADMIN && !adminDocExists) {
+            batch.set(
+                adminRef,
+                mapOf(
+                    "userId" to targetUser.userId,
+                    "email" to targetUser.email.ifBlank { "admin@koofkeet.org" },
+                    "createdAt" to serverTime()
+                )
+            )
+        } else if (newRole != UserRole.ADMIN && adminDocExists) {
+            batch.delete(adminRef)
+        }
+        batch.commit().await()
+        Result.success(Unit)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.UPDATE, "users/${targetUser.userId}")
+        Result.failure(e)
+    }
+
+    suspend fun revokeRoleGrant(email: String): Result<Unit> = try {
+        requireUserId()
+        val normalized = email.trim().lowercase()
+        require(normalized.contains("@")) { "Imeelii sirrii hin taane" }
+        db.collection("role_grants").document(normalized).delete().await()
+        Result.success(Unit)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.DELETE, "role_grants/$email")
         Result.failure(e)
     }
 
@@ -278,13 +413,32 @@ class SchoolRepository(
             } else {
                 db.collection("student_registrations").whereEqualTo("adminId", uid)
             }
-            UserRole.TEACHER -> db.collection("student_registrations").whereArrayContains("teacherUids", uid)
+            UserRole.TEACHER -> db.collection("student_registrations").whereEqualTo("status", "ACTIVE")
             UserRole.PARENT -> db.collection("student_registrations").whereEqualTo("parentUid", uid)
             UserRole.STUDENT -> db.collection("student_registrations").whereEqualTo("studentUid", uid)
         }
         return query.snapshots()
             .map { snap -> snap.toObjects(StudentRegistration::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE) }
             .handleStreamErrors(OperationType.LIST, "student_registrations", uid)
+    }
+
+    fun observeStudentUsers(profile: UserProfile): Flow<List<UserProfile>> {
+        val uid = auth.currentUser?.uid ?: return kotlinx.coroutines.flow.emptyFlow()
+        val query = when (profile.userRole) {
+            UserRole.TEACHER -> db.collection("users").whereEqualTo("role", UserRole.STUDENT.name)
+            UserRole.ADMIN -> if (profile.email.equals(BOOTSTRAP_ADMIN_EMAIL, ignoreCase = true)) {
+                db.collection("users").whereEqualTo("role", UserRole.STUDENT.name)
+            } else {
+                db.collection("users").whereEqualTo("adminId", uid)
+            }
+            else -> return kotlinx.coroutines.flow.emptyFlow()
+        }
+        return query.snapshots()
+            .map { snap ->
+                snap.toObjects(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    .filter { it.userRole == UserRole.STUDENT }
+            }
+            .handleStreamErrors(OperationType.LIST, "users", uid)
     }
 
     suspend fun registerStudent(

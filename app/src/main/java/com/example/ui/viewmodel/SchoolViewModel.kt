@@ -4,8 +4,12 @@ import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.core.AppLanguage
+import com.example.core.AttendanceDateHelper
 import com.example.core.MonthlyReportData
 import com.example.core.ReportStudentRow
+import com.example.core.RoleGuardState
+import com.example.core.RoleNavigationGuard
 import com.example.data.model.AiChatMessage
 import com.example.data.model.Announcement
 import com.example.data.model.AnnouncementCategory
@@ -13,6 +17,8 @@ import com.example.data.model.Assignment
 import com.example.data.model.AssignmentSubmission
 import com.example.data.model.AttendanceRecord
 import com.example.data.model.AttendanceStatus
+import com.example.data.model.AttendanceSyncStatus
+import com.example.data.model.CalendarEventCategory
 import com.example.data.model.EarlyWarning
 import com.example.data.model.ExamResult
 import com.example.data.model.LearningMaterial
@@ -22,15 +28,19 @@ import com.example.data.model.Quiz
 import com.example.data.model.QuizAttempt
 import com.example.data.model.QuizQuestion
 import com.example.data.model.RoleGrant
+import com.example.data.model.SchoolCalendarEvent
 import com.example.data.model.SchoolMeta
 import com.example.data.model.StudentRegistration
+import com.example.data.model.SyncPhase
 import com.example.data.model.TeacherAssignment
 import com.example.data.model.UserProfile
 import com.example.data.model.UserRole
 import com.example.data.repository.AiStreamEvent
 import com.example.data.repository.AiTutorRepository
 import com.example.data.repository.CommunicationAndRecordsRepository
+import com.example.data.repository.DailyAttendanceEntry
 import com.example.data.repository.SchoolRepository
+import com.example.data.repository.StudySupportMode
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -43,6 +53,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -108,6 +119,37 @@ class SchoolViewModel(
     val userProfileState: StateFlow<UiState<UserProfile?>> =
         schoolRepo.observeUserProfile(currentUserId).toUiStateFlow("userProfile")
 
+    val roleGuardState: StateFlow<RoleGuardState> = combine(
+        userProfileState,
+        _pendingGrant,
+        _schoolMeta
+    ) { profileState, grant, meta ->
+        when (profileState) {
+            is UiState.Loading -> RoleGuardState.CheckingFirestoreRole
+            is UiState.Error -> RoleGuardState.Error(profileState.message)
+            is UiState.Success -> {
+                val profile = profileState.data
+                if (profile == null) {
+                    val suggested = when {
+                        grant != null -> UserRole.fromRaw(grant.role)
+                        meta == null -> UserRole.ADMIN
+                        else -> UserRole.STUDENT
+                    }
+                    RoleGuardState.NeedsOnboarding(suggested)
+                } else {
+                    RoleGuardState.Authorized(
+                        profile = profile,
+                        targetDashboard = RoleNavigationGuard.homeRouteFor(profile.userRole)
+                    )
+                }
+            }
+        }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+        initialValue = RoleGuardState.CheckingFirestoreRole
+    )
+
     private val activeProfileFlow: Flow<UserProfile?> = userProfileState.map { state ->
         (state as? UiState.Success)?.data
     }
@@ -117,10 +159,59 @@ class SchoolViewModel(
             if (profile == null) flowOf(emptyList()) else schoolRepo.observeTeacherAssignments()
         }.toUiStateFlow("teacherAssignments")
 
+    val usersState: StateFlow<UiState<List<UserProfile>>> =
+        activeProfileFlow.flatMapLatest { profile ->
+            if (profile == null || profile.userRole != UserRole.ADMIN) flowOf(emptyList())
+            else schoolRepo.observeUsers(profile)
+        }.toUiStateFlow("users")
+
+    val roleGrantsState: StateFlow<UiState<List<RoleGrant>>> =
+        activeProfileFlow.flatMapLatest { profile ->
+            if (profile == null || profile.userRole != UserRole.ADMIN) flowOf(emptyList())
+            else schoolRepo.observeRoleGrants(profile)
+        }.toUiStateFlow("roleGrants")
+
     val studentRegistrationsState: StateFlow<UiState<List<StudentRegistration>>> =
         activeProfileFlow.flatMapLatest { profile ->
             if (profile == null) flowOf(emptyList()) else schoolRepo.observeStudentRegistrations(profile)
         }.toUiStateFlow("studentRegistrations")
+
+    val studentUsersState: StateFlow<UiState<List<UserProfile>>> =
+        activeProfileFlow.flatMapLatest { profile ->
+            if (profile == null || (profile.userRole != UserRole.TEACHER && profile.userRole != UserRole.ADMIN)) {
+                flowOf(emptyList())
+            } else {
+                schoolRepo.observeStudentUsers(profile)
+            }
+        }.toUiStateFlow("studentUsers")
+
+    val studentRosterState: StateFlow<List<StudentRegistration>> =
+        combine(studentRegistrationsState, studentUsersState) { regState, usersState ->
+            val regs = (regState as? UiState.Success)?.data.orEmpty()
+            val studentProfiles = (usersState as? UiState.Success)?.data.orEmpty()
+            val registeredUids = regs.map { it.studentUid }.filter { it.isNotBlank() }.toSet()
+            val extraFromUsers = studentProfiles
+                .filter { it.userId.isNotBlank() && it.userId !in registeredUids }
+                .map { u ->
+                    StudentRegistration(
+                        id = u.userId,
+                        studentUid = u.userId,
+                        studentName = u.displayName,
+                        studentCode = "",
+                        gradeLevel = u.gradeLevel.ifBlank { "Hunda" },
+                        section = "A",
+                        parentUid = "",
+                        parentName = "",
+                        adminId = u.adminId,
+                        status = "ACTIVE"
+                    )
+                }
+            (regs + extraFromUsers).sortedBy { it.studentName.lowercase() }
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyList()
+        )
 
     val assignmentsState: StateFlow<UiState<List<Assignment>>> =
         activeProfileFlow.flatMapLatest { profile ->
@@ -175,6 +266,30 @@ class SchoolViewModel(
     val aiChatsState: StateFlow<UiState<List<AiChatMessage>>> =
         commsRepo.observeAiChats(currentUserId).toUiStateFlow("aiChats")
 
+    val calendarEventsState: StateFlow<UiState<List<SchoolCalendarEvent>>> =
+        activeProfileFlow.flatMapLatest { profile ->
+            if (profile == null) flowOf(emptyList()) else commsRepo.observeCalendarEvents()
+        }.toUiStateFlow("schoolEvents")
+
+    private val _manualSyncPhase = MutableStateFlow<SyncPhase?>(null)
+    private val _lastManualSyncMillis = MutableStateFlow(0L)
+
+    val attendanceSyncStatus: StateFlow<AttendanceSyncStatus> =
+        combine(
+            activeProfileFlow.flatMapLatest { profile ->
+                if (profile == null) flowOf(AttendanceSyncStatus()) else commsRepo.observeAttendanceSyncStatus(profile)
+            },
+            _manualSyncPhase,
+            _lastManualSyncMillis
+        ) { metadataStatus, manualPhase, manualMillis ->
+            val effectivePhase = manualPhase ?: metadataStatus.phase
+            val effectiveLastSynced = maxOf(metadataStatus.lastSyncedMillis, manualMillis)
+            metadataStatus.copy(
+                phase = effectivePhase,
+                lastSyncedMillis = effectiveLastSynced
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), AttendanceSyncStatus())
+
     private val _aiTutorState = MutableStateFlow<AiTutorUiState>(AiTutorUiState.Idle)
     val aiTutorState: StateFlow<AiTutorUiState> = _aiTutorState.asStateFlow()
 
@@ -201,20 +316,36 @@ class SchoolViewModel(
         }
     }
 
-    fun completeOnboarding(displayName: String, gradeLevel: String, claimAdmin: Boolean) {
+    fun completeOnboarding(
+        displayName: String,
+        gradeLevel: String,
+        preferredLanguage: AppLanguage,
+        claimAdmin: Boolean
+    ) {
         viewModelScope.launch {
             _isBusy.value = true
-            val res = schoolRepo.onboardCurrentUser(displayName, gradeLevel, claimAdmin)
+            val res = schoolRepo.onboardCurrentUser(displayName, gradeLevel, preferredLanguage, claimAdmin)
             _isBusy.value = false
             res.fold(
                 onSuccess = {
                     refreshOnboardingContext()
-                    _events.emit("Baga nagaan dhuftan! Profile keessan qophaa'eera.")
+                    val msg = when (preferredLanguage) {
+                        AppLanguage.ENGLISH -> "Profile saved to Firestore! Welcome to Koofkeet School."
+                        AppLanguage.AMHARIC -> "መገለጫዎ ወደ Firestore ተቀምጧል! እንኳን ደህና መጡ።"
+                        AppLanguage.AFAAN_OROMOO -> "Profile keessan Firestore irratti olkaa'ameera! Baga nagaan dhuftan."
+                    }
+                    _events.emit(msg)
                 },
                 onFailure = { err ->
                     _events.emit(err.localizedMessage ?: "Galmeen hin milkoofne")
                 }
             )
+        }
+    }
+
+    fun updatePreferredLanguage(language: AppLanguage) {
+        viewModelScope.launch {
+            schoolRepo.updatePreferredLanguage(language)
         }
     }
 
@@ -239,6 +370,20 @@ class SchoolViewModel(
     ) = runMutation("Mirgi fayyadamaa ($role) imeelii kanaaf kennameera!") {
         schoolRepo.createRoleGrant(email, role, fullName, gradeLevel, subject, linkedStudentId, linkedStudentName)
     }
+
+    fun updateUserRole(
+        targetUser: UserProfile,
+        newRole: UserRole,
+        subject: String,
+        gradeLevel: String
+    ) = runMutation("Gaheen ${targetUser.displayName} gara ${newRole.labelOromo}tti jijjiirameera!") {
+        schoolRepo.updateUserRole(targetUser, newRole, subject, gradeLevel)
+    }
+
+    fun revokeRoleGrant(email: String) =
+        runMutation("Mirgi fayyadamaa ($email) haqameera!") {
+            schoolRepo.revokeRoleGrant(email)
+        }
 
     fun registerStudent(
         studentUid: String,
@@ -332,12 +477,13 @@ class SchoolViewModel(
         monthLabel: String,
         score: Double,
         remarks: String,
-        profile: UserProfile
+        profile: UserProfile,
+        successMessage: String = "Bu'aan qormaataa galmaa'eera!"
     ) {
         viewModelScope.launch {
             _isBusy.value = true
             val currentList = (examResultsState.value as? UiState.Success)?.data.orEmpty()
-                .filter { it.studentId == studentId }
+                .filter { it.studentId == studentId || (studentId.isBlank() && it.studentName == studentName) }
             val res = commsRepo.recordExamResultWithEarlyWarning(
                 studentId = studentId,
                 studentName = studentName,
@@ -356,9 +502,9 @@ class SchoolViewModel(
             res.fold(
                 onSuccess = { triggeredWarning ->
                     if (triggeredWarning) {
-                        _events.emit("Qabxiin galmaa'eera! Akeekkachiisni Dursa-Beeksisaa (Early Warning) gara barsiisaa fi bulchiinsaatti ergameera.")
+                        _events.emit("$successMessage (Early Warning triggered)")
                     } else {
-                        _events.emit("Bu'aan qormaataa galmaa'eera!")
+                        _events.emit(successMessage)
                     }
                 },
                 onFailure = { err ->
@@ -366,6 +512,22 @@ class SchoolViewModel(
                 }
             )
         }
+    }
+
+    fun updateExamResult(
+        resultId: String,
+        score: Double,
+        remarks: String,
+        successMessage: String
+    ) = runMutation(successMessage) {
+        commsRepo.updateExamResult(resultId, score, remarks)
+    }
+
+    fun deleteExamResult(
+        resultId: String,
+        successMessage: String
+    ) = runMutation(successMessage) {
+        commsRepo.deleteExamResult(resultId)
     }
 
     fun recordAttendance(
@@ -376,8 +538,9 @@ class SchoolViewModel(
         dateLabel: String,
         status: AttendanceStatus,
         note: String,
-        profile: UserProfile
-    ) = runMutation("Argamaan (Attendance) galmaa'eera!") {
+        profile: UserProfile,
+        successMessage: String = "Argamaan (Attendance) galmaa'eera!"
+    ) = runMutation(successMessage) {
         commsRepo.recordAttendance(
             studentId = studentId,
             studentName = studentName,
@@ -388,6 +551,122 @@ class SchoolViewModel(
             status = status,
             note = note
         )
+    }
+
+    fun markAllPresentForDate(
+        dateLabel: String,
+        students: List<StudentRegistration>,
+        existingForDate: List<AttendanceRecord>,
+        profile: UserProfile,
+        successPrefix: String
+    ) {
+        val markedIds = existingForDate.map { it.studentId }.toSet()
+        val pending = students.filter { it.studentUid.isNotBlank() && it.studentUid !in markedIds }
+        val targets = if (pending.isNotEmpty()) pending else students
+        if (targets.isEmpty()) return
+        val entries = targets.map { s ->
+            DailyAttendanceEntry(
+                studentId = s.studentUid,
+                studentName = s.studentName,
+                parentId = s.parentUid,
+                gradeLevel = s.gradeLevel.ifBlank { "Hunda" },
+                status = AttendanceStatus.PRESENT
+            )
+        }
+        viewModelScope.launch {
+            _isBusy.value = true
+            val res = commsRepo.markBatchAttendance(entries, dateLabel, profile.adminId)
+            _isBusy.value = false
+            res.fold(
+                onSuccess = { count -> _events.emit("$successPrefix$count") },
+                onFailure = { err -> _events.emit(err.localizedMessage ?: "Rakkoon uumameera") }
+            )
+        }
+    }
+
+    fun deleteAttendanceRecord(
+        attendanceId: String,
+        successMessage: String
+    ) = runMutation(successMessage) {
+        commsRepo.deleteAttendanceRecord(attendanceId)
+    }
+
+    fun syncAttendance(
+        profile: UserProfile,
+        syncedMessage: String,
+        offlineMessage: String
+    ) {
+        viewModelScope.launch {
+            _manualSyncPhase.value = SyncPhase.SYNCING
+            val res = commsRepo.syncAttendanceWithServer(profile)
+            res.fold(
+                onSuccess = { count ->
+                    _manualSyncPhase.value = null
+                    _lastManualSyncMillis.value = System.currentTimeMillis()
+                    _events.emit("$syncedMessage ($count)")
+                },
+                onFailure = {
+                    _manualSyncPhase.value = null
+                    _events.emit(offlineMessage)
+                }
+            )
+        }
+    }
+
+    fun upsertCalendarEvent(
+        title: String,
+        description: String,
+        eventDateLabel: String,
+        startTimeLabel: String,
+        endTimeLabel: String,
+        category: CalendarEventCategory,
+        gradeLevel: String,
+        subject: String,
+        profile: UserProfile,
+        successMessage: String
+    ) = runMutation(successMessage) {
+        commsRepo.upsertCalendarEvent(
+            title = title,
+            description = description,
+            eventDateLabel = eventDateLabel,
+            startTimeLabel = startTimeLabel,
+            endTimeLabel = endTimeLabel,
+            category = category,
+            gradeLevel = gradeLevel,
+            subject = subject,
+            creatorName = profile.displayName,
+            adminId = profile.adminId
+        )
+    }
+
+    fun deleteCalendarEvent(
+        eventId: String,
+        successMessage: String
+    ) = runMutation(successMessage) {
+        commsRepo.deleteCalendarEvent(eventId)
+    }
+
+    fun syncAcademicsToCalendar(
+        profile: UserProfile,
+        successPrefix: String
+    ) {
+        val assignments = (assignmentsState.value as? UiState.Success)?.data.orEmpty()
+        val quizzes = (quizzesState.value as? UiState.Success)?.data.orEmpty()
+        viewModelScope.launch {
+            _isBusy.value = true
+            val res = commsRepo.syncAcademicsToCalendar(
+                assignments = assignments,
+                quizzes = quizzes,
+                creatorName = profile.displayName,
+                adminId = profile.adminId,
+                fallbackDate = AttendanceDateHelper.todayDateLabel()
+            )
+            _isBusy.value = false
+            res.fold(
+                onSuccess = { count -> _events.emit("$successPrefix$count") },
+                onFailure = { err -> _events.emit(err.localizedMessage ?: "Sync hin milkoofne") }
+            )
+        }
     }
 
     fun addLearningMaterial(
@@ -458,18 +737,35 @@ class SchoolViewModel(
         )
     }
 
-    fun askAiTutor(prompt: String, subject: String, attachedBitmap: Bitmap?) {
-        if (prompt.isBlank()) return
+    fun askAiTutor(
+        prompt: String,
+        subject: String,
+        studyMode: StudySupportMode = StudySupportMode.EXPLAIN,
+        attachedBitmap: Bitmap? = null,
+        language: AppLanguage = AppLanguage.AFAAN_OROMOO,
+        gradeLevel: String = ""
+    ) {
+        val cleanPrompt = prompt.trim()
+        if (cleanPrompt.isEmpty()) return
+        val history = (aiChatsState.value as? UiState.Success)?.data.orEmpty()
         viewModelScope.launch {
             _aiTutorState.value = AiTutorUiState.Loading
-            aiRepo.streamTutorAnswer(prompt, subject, attachedBitmap).collect { event ->
+            aiRepo.streamTutorAnswer(
+                prompt = cleanPrompt,
+                subject = subject,
+                attachedImage = attachedBitmap,
+                studyMode = studyMode,
+                language = language,
+                gradeLevel = gradeLevel,
+                recentHistory = history
+            ).collect { event ->
                 when (event) {
                     is AiStreamEvent.Chunk -> {
                         _aiTutorState.value = AiTutorUiState.Streaming(event.accumulatedText)
                     }
                     is AiStreamEvent.Completed -> {
                         _aiTutorState.value = AiTutorUiState.Success(event.finalText)
-                        commsRepo.saveAiChat(prompt, event.finalText, subject)
+                        commsRepo.saveAiChat(cleanPrompt, event.finalText, subject)
                     }
                     is AiStreamEvent.Error -> {
                         _aiTutorState.value = AiTutorUiState.Error(event.message)
@@ -479,31 +775,66 @@ class SchoolViewModel(
         }
     }
 
+    fun deleteAiChat(chatId: String) {
+        viewModelScope.launch {
+            commsRepo.deleteAiChat(chatId)
+        }
+    }
+
+    fun clearAllPrivateAiChats() {
+        viewModelScope.launch {
+            _aiTutorState.value = AiTutorUiState.Idle
+            commsRepo.clearAllAiChats()
+        }
+    }
+
     fun buildMonthlyReport(monthLabel: String): MonthlyReportData {
-        val students = (studentRegistrationsState.value as? UiState.Success)?.data.orEmpty()
+        val registeredStudents = (studentRegistrationsState.value as? UiState.Success)?.data.orEmpty()
         val teachers = (teacherAssignmentsState.value as? UiState.Success)?.data.orEmpty()
         val assignments = (assignmentsState.value as? UiState.Success)?.data.orEmpty()
         val exams = (examResultsState.value as? UiState.Success)?.data.orEmpty()
             .filter { monthLabel.equals("Hunda", ignoreCase = true) || it.monthLabel.contains(monthLabel, ignoreCase = true) }
         val attendance = (attendanceState.value as? UiState.Success)?.data.orEmpty()
+            .filter { monthLabel.equals("Hunda", ignoreCase = true) || it.dateLabel.startsWith(monthLabel, ignoreCase = true) }
         val warnings = (earlyWarningsState.value as? UiState.Success)?.data.orEmpty()
+
+        val studentDirectory = linkedMapOf<String, Pair<String, String>>() // key -> (name, grade)
+        registeredStudents.forEach { s ->
+            val key = s.studentUid.ifBlank { s.studentName }
+            if (key.isNotBlank() && s.studentName.isNotBlank()) {
+                studentDirectory[key] = s.studentName to s.gradeLevel.ifBlank { "Grade 1" }
+            }
+        }
+        exams.forEach { ex ->
+            val key = ex.studentId.ifBlank { ex.studentName }
+            if (key.isNotBlank()) {
+                studentDirectory.putIfAbsent(key, ex.studentName to ex.gradeLevel.ifBlank { "Grade 1" })
+            }
+        }
+        attendance.forEach { rec ->
+            val key = rec.studentId.ifBlank { rec.studentName }
+            if (key.isNotBlank()) {
+                studentDirectory.putIfAbsent(key, rec.studentName to rec.gradeLevel.ifBlank { "Grade 1" })
+            }
+        }
 
         val avgScore = if (exams.isEmpty()) 0.0 else exams.map { it.score }.average()
         val presentCount = attendance.count { it.status == AttendanceStatus.PRESENT.name }
         val attendanceRate = if (attendance.isEmpty()) 100.0 else (presentCount.toDouble() / attendance.size) * 100.0
 
-        val rows = students.map { s ->
-            val sExams = exams.filter { it.studentId == s.studentUid || it.studentName == s.studentName }
+        val rows = studentDirectory.entries.map { (key, info) ->
+            val (sName, sGrade) = info
+            val sExams = exams.filter { it.studentId == key || it.studentName == sName }
             val sAvg = if (sExams.isEmpty()) 0.0 else sExams.map { it.score }.average()
-            val sAtt = attendance.filter { it.studentId == s.studentUid || it.studentName == s.studentName }
+            val sAtt = attendance.filter { it.studentId == key || it.studentName == sName }
             val sRate = if (sAtt.isEmpty()) 100.0 else (sAtt.count { it.status == AttendanceStatus.PRESENT.name }.toDouble() / sAtt.size) * 100.0
             ReportStudentRow(
-                studentName = s.studentName,
-                gradeLevel = s.gradeLevel,
+                studentName = sName,
+                gradeLevel = sGrade,
                 averageScore = sAvg,
                 attendancePercent = sRate
             )
-        }
+        }.sortedBy { it.studentName.lowercase() }
 
         val warningLines = warnings.map { w ->
             "${w.studentName} (${w.subject}): ${"%.1f".format(w.currentScore)}% [${w.status}] - ${w.reason}"
@@ -511,7 +842,7 @@ class SchoolViewModel(
 
         return MonthlyReportData(
             monthLabel = monthLabel,
-            totalStudents = students.size,
+            totalStudents = studentDirectory.size,
             totalTeachers = teachers.map { it.teacherName }.distinct().size,
             totalAssignments = assignments.size,
             totalExamsRecorded = exams.size,

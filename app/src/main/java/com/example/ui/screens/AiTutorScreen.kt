@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -32,6 +33,9 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -44,6 +48,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -61,8 +66,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.core.LocalAppLanguage
+import com.example.core.stringsFor
 import com.example.data.model.AiChatMessage
 import com.example.data.repository.AI_TUTOR_GREETING
+import com.example.data.repository.StudySupportMode
+import com.example.ui.components.PrivacyIsolationNotice
 import com.example.ui.components.SectionHeader
 import com.example.ui.viewmodel.AiTutorUiState
 
@@ -70,12 +79,16 @@ import com.example.ui.viewmodel.AiTutorUiState
 fun AiTutorScreen(
     aiState: AiTutorUiState,
     savedChats: List<AiChatMessage>,
-    onAskTutor: (prompt: String, subject: String, attachedBitmap: Bitmap?) -> Unit,
+    onAskTutor: (prompt: String, subject: String, mode: StudySupportMode, attachedBitmap: Bitmap?) -> Unit,
+    onDeleteChat: (String) -> Unit = {},
+    onClearHistory: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val strings = stringsFor(LocalAppLanguage.current)
     val subjects = listOf("Waliigalaa", "Herrega", "Baayoolojii", "Fiiziksii", "Keemistirii", "Afaan Oromoo", "Ingiliffa")
     var selectedSubject by remember { mutableStateOf(subjects.first()) }
+    var selectedMode by remember { mutableStateOf(StudySupportMode.EXPLAIN) }
     var promptText by remember { mutableStateOf("") }
     var attachedBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
@@ -100,35 +113,92 @@ fun AiTutorScreen(
                     shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Image(
-                            painter = painterResource(id = R.drawable.img_ai_tutor_avatar),
-                            contentDescription = "Koofkeet AI Tutor Avatar",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(CircleShape)
-                        )
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Column {
-                            Text(
-                                text = "Gargaaraa AI (Koofkeet AI Tutor)",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Image(
+                                painter = painterResource(id = R.drawable.img_ai_tutor_avatar),
+                                contentDescription = strings.aiTutorTitle,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(CircleShape)
                             )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = stringResource(R.string.ai_tutor_greeting).ifBlank { AI_TUTOR_GREETING },
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = strings.aiTutorTitle,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = stringResource(R.string.ai_tutor_greeting).ifBlank { AI_TUTOR_GREETING },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
                         }
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Lock,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = strings.aiTutorPrivateBadge,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                PrivacyIsolationNotice(strings.aiTutorPrivateSubtitle)
+            }
+
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val modes = listOf(
+                        StudySupportMode.EXPLAIN to strings.aiTutorModeExplain,
+                        StudySupportMode.HOMEWORK to strings.aiTutorModeHomework,
+                        StudySupportMode.PRACTICE_QUIZ to strings.aiTutorModePractice,
+                        StudySupportMode.STUDY_PLAN to strings.aiTutorModeStudyPlan
+                    )
+                    modes.forEach { (mode, label) ->
+                        FilterChip(
+                            selected = selectedMode == mode,
+                            onClick = { selectedMode = mode },
+                            label = { Text(label) }
+                        )
                     }
                 }
             }
@@ -162,8 +232,8 @@ fun AiTutorScreen(
                         OutlinedTextField(
                             value = promptText,
                             onValueChange = { promptText = it },
-                            label = { Text("Gaaffii barnootaa barreessaa...") },
-                            placeholder = { Text("Fkn: Equation 2x + 5 = 15 akkamitti furama?") },
+                            label = { Text(strings.aiTutorAskLabel) },
+                            placeholder = { Text(strings.aiTutorAskPlaceholder) },
                             minLines = 3,
                             maxLines = 6,
                             modifier = Modifier
@@ -175,7 +245,7 @@ fun AiTutorScreen(
                             Box(modifier = Modifier.fillMaxWidth()) {
                                 Image(
                                     bitmap = attachedBitmap!!.asImageBitmap(),
-                                    contentDescription = "Suuraa gaaffii",
+                                    contentDescription = strings.aiTutorAttachPhoto,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(140.dp)
@@ -189,7 +259,7 @@ fun AiTutorScreen(
                                     Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surface) {
                                         Icon(
                                             Icons.Filled.Close,
-                                            contentDescription = "Suuraa haqi",
+                                            contentDescription = "Remove photo",
                                             modifier = Modifier.padding(4.dp)
                                         )
                                     }
@@ -208,25 +278,27 @@ fun AiTutorScreen(
                                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                                     )
                                 },
-                                modifier = Modifier.testTag("ai_attach_image_button")
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .testTag("ai_attach_image_button")
                             ) {
                                 Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Suuraa")
+                                Text(strings.aiTutorAttachPhoto)
                             }
 
                             Button(
                                 onClick = {
                                     val q = promptText.trim()
                                     if (q.isNotEmpty()) {
-                                        onAskTutor(q, selectedSubject, attachedBitmap)
+                                        onAskTutor(q, selectedSubject, selectedMode, attachedBitmap)
                                         promptText = ""
                                     }
                                 },
                                 enabled = promptText.isNotBlank() && aiState !is AiTutorUiState.Loading && aiState !is AiTutorUiState.Streaming,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(48.dp)
+                                    .heightIn(min = 48.dp)
                                     .testTag("ai_send_button")
                             ) {
                                 if (aiState is AiTutorUiState.Loading) {
@@ -238,7 +310,7 @@ fun AiTutorScreen(
                                 } else {
                                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Gaafadhu")
+                                    Text(strings.aiTutorAskButton)
                                 }
                             }
                         }
@@ -249,17 +321,17 @@ fun AiTutorScreen(
             when (aiState) {
                 is AiTutorUiState.Streaming -> {
                     item {
-                        AiResponseCard(title = "AI Tutor barreessaa jira...", body = aiState.text, isError = false)
+                        AiResponseCard(title = strings.aiTutorStreamingTitle, body = aiState.text, isError = false)
                     }
                 }
                 is AiTutorUiState.Success -> {
                     item {
-                        AiResponseCard(title = "Deebii Koofkeet AI Tutor", body = aiState.text, isError = false)
+                        AiResponseCard(title = strings.aiTutorReplyTitle, body = aiState.text, isError = false)
                     }
                 }
                 is AiTutorUiState.Error -> {
                     item {
-                        AiResponseCard(title = "Dogoggora AI Tutor", body = aiState.message, isError = true)
+                        AiResponseCard(title = strings.aiTutorErrorTitle, body = aiState.message, isError = true)
                     }
                 }
                 else -> Unit
@@ -267,10 +339,27 @@ fun AiTutorScreen(
 
             if (savedChats.isNotEmpty()) {
                 item {
-                    SectionHeader(
-                        title = "Seenaa Gaaffilee Keessanii",
-                        subtitle = "Qophii iccitii dhuunfaa (Private AI History)"
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        SectionHeader(
+                            title = strings.aiTutorHistoryTitle,
+                            subtitle = strings.aiTutorPrivateBadge,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(
+                            onClick = onClearHistory,
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("clear_private_ai_history")
+                        ) {
+                            Icon(Icons.Filled.DeleteSweep, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(strings.aiTutorClearHistory)
+                        }
+                    }
                 }
                 items(savedChats.sortedByDescending { it.createdAt?.seconds ?: 0L }, key = { it.id }) { chat ->
                     Card(
@@ -279,24 +368,46 @@ fun AiTutorScreen(
                     ) {
                         Column(
                             modifier = Modifier.padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    shape = MaterialTheme.shapes.extraSmall,
+                                    color = MaterialTheme.colorScheme.secondaryContainer
+                                ) {
+                                    Text(
+                                        text = chat.subject,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                                IconButton(onClick = { onDeleteChat(chat.id) }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.DeleteOutline,
+                                        contentDescription = "Delete chat",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
                             Surface(
-                                shape = MaterialTheme.shapes.extraSmall,
-                                color = MaterialTheme.colorScheme.secondaryContainer
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text(
-                                    text = chat.subject,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    text = chat.prompt,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(10.dp)
                                 )
                             }
-                            Text(
-                                text = "Gaaffii: ${chat.prompt}",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold
-                            )
                             Text(
                                 text = chat.response,
                                 style = MaterialTheme.typography.bodyMedium,

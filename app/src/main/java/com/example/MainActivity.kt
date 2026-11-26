@@ -28,6 +28,9 @@ import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
@@ -359,6 +362,7 @@ private fun KoofkeetMainShell(
     val localizedStrings = stringsFor(currentLanguage)
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
+    var showProfileDialog by remember { mutableStateOf(false) }
     val darkActive = isDarkThemeActive(themeMode)
 
     LaunchedEffect(Unit) {
@@ -418,9 +422,12 @@ private fun KoofkeetMainShell(
             add(NavDestination(AppRoute.ACADEMICS.routeId, "Barnoota", Icons.AutoMirrored.Filled.MenuBook))
             add(NavDestination(AppRoute.AI_TUTOR.routeId, "AI Tutor", Icons.Filled.AutoAwesome))
             add(NavDestination(AppRoute.COMMS.routeId, "Qunnamtii", Icons.Filled.Forum))
+            add(NavDestination(AppRoute.PERFORMANCE.routeId, "Raawwii", Icons.Filled.ShowChart))
+            add(NavDestination(AppRoute.NOTIFICATIONS.routeId, "Beeksisa", Icons.Filled.NotificationsActive))
             if (profile.userRole == UserRole.ADMIN) {
                 add(NavDestination(AppRoute.ADMIN_MANAGEMENT.routeId, "Bulchiinsa", Icons.Filled.AdminPanelSettings))
             }
+            add(NavDestination(AppRoute.USER_MANUAL.routeId, "Maanuwaalii", Icons.AutoMirrored.Filled.MenuBook))
             add(NavDestination(AppRoute.DEVELOPER.routeId, "Qopheessaa", Icons.Filled.Code))
         }
     }
@@ -486,6 +493,26 @@ private fun KoofkeetMainShell(
                         Icon(
                             imageVector = if (darkActive) Icons.Filled.LightMode else Icons.Filled.DarkMode,
                             contentDescription = localizedStrings.themeChooseTitle,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    IconButton(
+                        onClick = { guardedNavigate(AppRoute.NOTIFICATIONS.routeId) },
+                        modifier = Modifier.testTag("notifications_top_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.NotificationsActive,
+                            contentDescription = localizedStrings.notificationTitle,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    IconButton(
+                        onClick = { showProfileDialog = true },
+                        modifier = Modifier.testTag("student_profile_top_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Person,
+                            contentDescription = localizedStrings.studentProfileTitle,
                             tint = MaterialTheme.colorScheme.primary
                         )
                     }
@@ -799,10 +826,28 @@ private fun KoofkeetMainShell(
                         }
                     )
                     AppRoute.DEVELOPER -> DeveloperScreen()
+                    AppRoute.USER_MANUAL -> com.example.ui.screens.UserManualScreen()
+                    AppRoute.PERFORMANCE -> com.example.ui.screens.PerformanceDashboardScreen(
+                        profile = profile,
+                        examResults = examResults,
+                        attendance = attendance,
+                        earlyWarnings = earlyWarnings
+                    )
+                    AppRoute.NOTIFICATIONS -> com.example.ui.screens.NotificationScreen(
+                        announcements = announcements,
+                        earlyWarnings = earlyWarnings
+                    )
                 }
             }
         }
     }
+
+    if (showProfileDialog) {
+                        com.example.ui.screens.StudentProfileDialog(
+                            profile = profile,
+                            onDismiss = { showProfileDialog = false }
+                        )
+                    }
 
     if (showLanguageDialog) {
         AlertDialog(

@@ -47,6 +47,18 @@ enum class AppRoute(
     DEVELOPER(
         routeId = "developer",
         allowedRoles = UserRole.entries.toSet()
+    ),
+    USER_MANUAL(
+        routeId = "user_manual",
+        allowedRoles = UserRole.entries.toSet()
+    ),
+    PERFORMANCE(
+        routeId = "performance",
+        allowedRoles = UserRole.entries.toSet()
+    ),
+    NOTIFICATIONS(
+        routeId = "notifications",
+        allowedRoles = UserRole.entries.toSet()
     );
 
     companion object {

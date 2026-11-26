@@ -186,7 +186,13 @@ data class LocalizedLoginStrings(
     val calendarDeletedToast: String,
     val calendarSyncAcademicsToast: String,
     val calendarIcsSuccessToast: String,
-    val calendarOpenFull: String
+    val calendarOpenFull: String,
+    val performanceTitle: String,
+    val performanceSubtitle: String,
+    val notificationTitle: String,
+    val notificationSubtitle: String,
+    val studentProfileTitle: String,
+    val downloadBooksButton: String
 )
 
 fun stringsFor(language: AppLanguage): LocalizedLoginStrings = when (language) {
@@ -343,7 +349,13 @@ fun stringsFor(language: AppLanguage): LocalizedLoginStrings = when (language) {
         calendarDeletedToast = "Sagantaan kalandarii haqameera.",
         calendarSyncAcademicsToast = "Sagantaaleen hojii manaa & quiz kalandariitti sync ta'aniiru: ",
         calendarIcsSuccessToast = "Faayiliin kalandarii (.ics) milkaa'inaan baafameera!",
-        calendarOpenFull = "Kalandarii Guutuu Bani"
+        calendarOpenFull = "Kalandarii Guutuu Bani",
+        performanceTitle = "Dashboard Raawwii (Performance Dashboard)",
+        performanceSubtitle = "Qabxii, Giddu-galeessa fi Haalata Barnootaa",
+        notificationTitle = "Beeksisa (Notifications)",
+        notificationSubtitle = "Beeksisoota har'aa fi dursa-beeksisaa",
+        studentProfileTitle = "Profile Barataa (Student Profile)",
+        downloadBooksButton = "Kitaabilee Buufadhu"
     )
 
     AppLanguage.ENGLISH -> LocalizedLoginStrings(
@@ -499,7 +511,13 @@ fun stringsFor(language: AppLanguage): LocalizedLoginStrings = when (language) {
         calendarDeletedToast = "Calendar event deleted.",
         calendarSyncAcademicsToast = "Synced academic dates to school calendar: ",
         calendarIcsSuccessToast = "Calendar (.ics) file exported for Google/Apple/Outlook sync!",
-        calendarOpenFull = "Open Full Calendar"
+        calendarOpenFull = "Open Full Calendar",
+        performanceTitle = "Performance Dashboard",
+        performanceSubtitle = "Grades, Exam Averages & Academic Analytics",
+        notificationTitle = "Notifications & Alerts",
+        notificationSubtitle = "School announcements and early warning alerts",
+        studentProfileTitle = "Student Profile",
+        downloadBooksButton = "Download Books"
     )
 
     AppLanguage.AMHARIC -> LocalizedLoginStrings(
@@ -655,7 +673,13 @@ fun stringsFor(language: AppLanguage): LocalizedLoginStrings = when (language) {
         calendarDeletedToast = "የካላንደር ዝግጅት ተሰርዟል።",
         calendarSyncAcademicsToast = "የትምህርት ቀኖች ወደ ካላንደር ተመሳስለዋል፦ ",
         calendarIcsSuccessToast = "የካላንደር (.ics) ፋይል በተሳካ ሁኔታ ወርዷል!",
-        calendarOpenFull = "ሙሉ ካላንደር ክፈት"
+        calendarOpenFull = "ሙሉ ካላንደር ክፈት",
+        performanceTitle = "የውጤት እና አፈጻጸም ዳሽቦርድ (Performance Dashboard)",
+        performanceSubtitle = "ውጤቶች፣ አማካዮች እና የትምህርት አፈጻጸም ትንተና",
+        notificationTitle = "ማስታወቂያዎች እና መልዕክቶች (Notifications)",
+        notificationSubtitle = "የትምህርት ቤት ማስታወቂያዎች እና የቅድመ ማስጠንቀቂያ መልዕክቶች",
+        studentProfileTitle = "የተማሪ መገለጫ (Student Profile)",
+        downloadBooksButton = "መጻሕፍትን አውርድ (Download Books)"
     )
 }
 

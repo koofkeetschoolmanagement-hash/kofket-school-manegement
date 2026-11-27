@@ -207,7 +207,8 @@ data class LocalizedLoginStrings(
     val attendanceExportPdfButton: String,
     val attendanceExportSuccessToast: String,
     val attendanceFilterUnmarked: String,
-    val attendanceResultsFoundPrefix: String
+    val attendanceResultsFoundPrefix: String,
+    val digitalIdTitle: String
 )
 
 fun stringsFor(language: AppLanguage): LocalizedLoginStrings = when (language) {
@@ -385,7 +386,8 @@ fun stringsFor(language: AppLanguage): LocalizedLoginStrings = when (language) {
         attendanceExportPdfButton = "PDF Baasi",
         attendanceExportSuccessToast = "Ragaan argamaa milkaa'inaan baafameera!",
         attendanceFilterUnmarked = "Galmee Hin Qabne",
-        attendanceResultsFoundPrefix = "Barattoota argaman: "
+        attendanceResultsFoundPrefix = "Barattoota argaman: ",
+        digitalIdTitle = "Kaardii Eenyummaa Dijitaalaa (Digital ID)"
     )
 
     AppLanguage.ENGLISH -> LocalizedLoginStrings(
@@ -562,7 +564,8 @@ fun stringsFor(language: AppLanguage): LocalizedLoginStrings = when (language) {
         attendanceExportPdfButton = "Export PDF",
         attendanceExportSuccessToast = "Attendance data exported successfully!",
         attendanceFilterUnmarked = "Unmarked",
-        attendanceResultsFoundPrefix = "Results found: "
+        attendanceResultsFoundPrefix = "Results found: ",
+        digitalIdTitle = "Digital ID Card"
     )
 
     AppLanguage.AMHARIC -> LocalizedLoginStrings(
@@ -739,7 +742,8 @@ fun stringsFor(language: AppLanguage): LocalizedLoginStrings = when (language) {
         attendanceExportPdfButton = "PDF አውርድ",
         attendanceExportSuccessToast = "የመገኘት መረጃው በተሳካ ሁኔታ ወርዷል!",
         attendanceFilterUnmarked = "ያልተመዘገቡ",
-        attendanceResultsFoundPrefix = "የተገኙ ውጤቶች፦ "
+        attendanceResultsFoundPrefix = "የተገኙ ውጤቶች፦ ",
+        digitalIdTitle = "ዲጂታል መታወቂያ (Digital ID)"
     )
 }
 
